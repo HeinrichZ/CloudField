@@ -645,12 +645,12 @@ const lclBase = Amod.lclHeight();
 ok(Math.abs(lclRH - lclBase) > 1e-4, '环境湿度偏移改变 LCL', lclRH.toFixed(3) + ' vs ' + lclBase.toFixed(3));
 Amod.STATE.envT = svEnvT; Amod.STATE.envRH = svEnvRH;
 
-// 风平流：方向/尺度必须与着色器一致（x = wx·t 处应复现 t=0 的场）
+// 风平流：气象来向 +180° 为顺风去向（270° 西风向东 +x 平流，x = wx·t 处复现 t=0 的场）
 const wLay = Amod.effectiveLayers(), wv8 = { x: 8, dir: 270 };
 const fA = Amod.sampleFields(0, 0, 1, wLay, wv8, 0);
-const dxW = Math.sin(270 * Math.PI / 180) * 8 * Amod.WIND_SCALE * 10;
+const dxW = Math.sin((270 + 180) * Math.PI / 180) * 8 * Amod.WIND_SCALE * 10;
 const fB = Amod.sampleFields(dxW, 0, 1, wLay, wv8, 10);
-ok(Math.abs(fB.density - fA.density) < 1e-6, '风平流方向/尺度与着色器一致（x=wx·t 复现 t=0）', fA.density.toFixed(4) + ' vs ' + fB.density.toFixed(4));
+ok(dxW > 0 && Math.abs(fB.density - fA.density) < 1e-6, '风平流方向/尺度与顺风向及着色器一致（270°西风 dxW>0 且 x=wx·t 复现 t=0）', `dxW=${dxW.toFixed(2)}, ` + fA.density.toFixed(4) + ' vs ' + fB.density.toFixed(4));
 ok(Math.abs(Amod.WIND_SCALE - 0.01) < 1e-12, 'WIND_SCALE = 0.01（10× 时间加速）');
 
 // 最差能见度：水平网格扫描（不再死盯单列），且随仿真时间变化
@@ -682,8 +682,9 @@ ok(cmp.sb06[0] > cmp.sb06[cmp.sb06.length - 1] * 2,
 
 // 2) ETH CLOUDLAB 过冷层云播云（WBF 冰化沟槽 + 能见度跃升诊断）
 const svSeed = JSON.parse(JSON.stringify(Amod.STATE.seeding));
-const svSurfT = Amod.STATE.surfaceTemp;
+const svSurfT = Amod.STATE.surfaceTemp, svWDir15 = Amod.STATE.windDir;
 Amod.STATE.surfaceTemp = 0; // 1 km 处约 -6.5°C（低于 AgI -5°C 阈值）
+Amod.STATE.windDir = 270;   // 正西风，下风向沿 +x 轴
 Amod.STATE.seeding.on = true;
 Amod.STATE.seeding.agent = 'AgI';
 Amod.STATE.seeding.inpConc = 200;
@@ -699,6 +700,7 @@ ok(sdDiag && sdDiag.seededVis > sdDiag.ambientVis * 1.3,
   `${sdDiag.ambientVis.toFixed(0)} m → ${sdDiag.seededVis.toFixed(0)} m (×${sdDiag.gainRatio.toFixed(2)})`);
 Amod.STATE.seeding = svSeed;
 Amod.STATE.surfaceTemp = svSurfT;
+Amod.STATE.windDir = svWDir15;
 
 // 3) Korolev 温度自适应混合相态 + 粒子谱有效方差 ν_eff 光学与雷达耦合
 const svAutoT = Amod.STATE.micro.autoPhaseTemp, svLapse = Amod.STATE.lapseRate, svSurfT2 = Amod.STATE.surfaceTemp;
@@ -742,6 +744,7 @@ ok(Math.abs(bufrDew - Number(Amod.dewAt(0).toFixed(2))) < 1e-6, 'BUFR 导出露�
 const rThick = Rad.reflectance(128, 0.5, 0.999, 0.85);
 ok(rThick > 0.78 && rThick < 1.0, '双流辐射：厚云极限 (τ=128) 反照率收敛于渐近极限 R_∞ > 0.78（不归零）', rThick.toFixed(3));
 
+Amod.STATE.windDir = 270;
 Amod.STATE.seeding.on = true; Amod.STATE.seeding.x0 = -8; Amod.STATE.seeding.alt = 1.0;
 const pNear = Amod.seedingPlumeAt(-7.2, 0, 1.0); // 下风向 0.8 km（近源端冰晶过渡区）
 const pFar = Amod.seedingPlumeAt(-1.0, 0, 1.0);  // 下风向 7.0 km（远端沉降沟槽）
@@ -787,6 +790,48 @@ Amod.STATE.sliceAlt = svSliceAlt; Amod.STATE.layers.sc.on = svScOn2; Amod.STATE.
 const sondeRows = Amod.validateAgainstRadiosonde();
 ok(sondeRows.length > 0 && sondeRows.every(r => typeof r.obsVis === 'number' && r.obsVis > 0),
   'validateAgainstRadiosonde 返回逐层探空观测参考能见度 obsVis');
+
+// 8) 第二轮深度科学可靠性与工程自洽性验证（平流符号、主界面详细消光打通、对数正态谱互逆、Batch/TimeSeries 状态隔离）
+ok(clouds.indexOf('p.x - uWind.x * uTime') > 0 && clouds.indexOf('p.x - uWind.x*uTime') > 0,
+  '3D 着色器云体与 Occupancy 采样均采用顺风向上游回溯 (p - uWind * uTime)');
+
+// 主模型 worstVisibility 与扩展物理层（气溶胶/相态）打通
+const snapBefore8 = Amod.serialize();
+Amod.LAYER_ORDER.forEach(k => { Amod.STATE.layers[k].on = false; });
+Amod.STATE.aerosol.on = true; Amod.STATE.aerosol.beta0 = 5e-4; Amod.STATE.aerosol.scaleH = 1.5;
+const wvAero = Amod.worstVisibility(Amod.effectiveLayers(), { x: 5, dir: 270 }, 0);
+ok(isFinite(wvAero.vis) && wvAero.vis < 15000, '无云开启气溶胶霾时，主界面 worstVisibility 正确反映气溶胶低能见度（不再恒为 ∞）', wvAero.vis.toFixed(0) + ' m');
+Amod.deserialize(snapBefore8);
+
+// 谱矩正向 LWC 与 effRadiusFromLWC(lwc, N, veff) 严格互逆，且对数正态谱 r_e 接入 operativeRe
+const fwdMom = win.Spectrum.lwcFromMoments(300, 9.5, 0.18);
+const invRe = Amod.effRadiusFromLWC(fwdMom.gm3, 300, 0.18);
+ok(Math.abs(invRe - 9.5) < 1e-6, 'Spectrum.lwcFromMoments 与 Atmosphere.effRadiusFromLWC(lwc, N, veff) 严格互逆', invRe.toFixed(4) + ' µm');
+Amod.STATE.micro.reMode = 'fixed';
+Amod.STATE.spectrum.type = 'lognormal'; Amod.STATE.spectrum.rg = 7.0; Amod.STATE.spectrum.sigmaG = 1.35;
+const reLog = Amod.operativeRe(0.3);
+const expReLog = 7.0 * Math.exp(2.5 * Math.pow(Math.log(1.35), 2));
+ok(Math.abs(reLog - expReLog) < 1e-6, '对数正态谱模式下 operativeRe() 正确返回 r_g·exp(2.5·ln²σ_g)', reLog.toFixed(3) + ' µm');
+Amod.deserialize(snapBefore8);
+
+// Batch.run 站点间参数隔离且运行后恢复调用前状态
+Amod.STATE.aerosol.on = false;
+const batchRows = win.Batch.run({
+  stations: [
+    { name: 'ST_FOG', patch: { layers: { sc: { on: true, coverage: 0.98, density: 0.95 } }, aerosol: { on: true, beta0: 1e-3 } } },
+    { name: 'ST_CLEAN', patch: { layers: { sc: { on: false }, cu: { on: false }, cs: { on: false }, ci: { on: false }, cb: { on: false } } } },
+  ],
+  times: [0],
+});
+ok(batchRows.length === 2 && batchRows[0].vis < 1000 && batchRows[1].vis === null && Amod.STATE.aerosol.on === false,
+  'Batch.run 站点间状态严格隔离（ST_CLEAN 不受 ST_FOG 气溶胶/云层污染）且结束后恢复原状态',
+  JSON.stringify(batchRows.map(r => r.vis)));
+
+// TimeSeries.visibilityCurve 不篡改当前 STATE
+const tempBeforeTS = Amod.STATE.surfaceTemp;
+win.TimeSeries.applyDefault();
+win.TimeSeries.visibilityCurve(8);
+ok(Math.abs(Amod.STATE.surfaceTemp - tempBeforeTS) < 1e-6, 'TimeSeries.visibilityCurve 计算后无损还原调用前的场景温度与状态');
 
 // ================= 汇总 =================
 console.log('\n========================================');

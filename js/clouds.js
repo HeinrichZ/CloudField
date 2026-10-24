@@ -109,7 +109,7 @@
     float d2 = (h - peak) * 2.0;
     float vfall = exp(-d2 * d2 * w);
     float sc = uScaleDet[i].x, det = uScaleDet[i].y;
-    vec3 np = vec3(p.x + uWind.x * uTime, p.y * 0.5 + uWind.y * uTime * 0.3, p.z + uWind.y * uTime) * sc;
+    vec3 np = vec3(p.x - uWind.x * uTime, p.y * 0.5 - uWind.y * uTime * 0.3, p.z - uWind.y * uTime) * sc;
     float n = fbm(np);
     n += det * (fbm(np * 3.1) - 0.5) * 0.6;
     n = clamp(n, 0.0, 1.0);
@@ -200,7 +200,7 @@
   // 世界坐标 -> occ 纹理坐标。occ 建在 t=0 的噪声空间里，云体则随 uWind*uTime 平移，
   // 所以查表前要先把点搬回噪声空间，否则云飘走后 occ 与实际密度错配。
   float sampleOcc(vec3 p){
-    vec3 q = vec3(p.x + uWind.x*uTime, p.y + uWind.y*uTime*0.6, p.z + uWind.y*uTime);
+    vec3 q = vec3(p.x - uWind.x*uTime, p.y - uWind.y*uTime*0.6, p.z - uWind.y*uTime);
     vec3 n = vec3((q.x + uOccDomX*0.5)/uOccDomX, q.y/uMaxAlt, (q.z + uOccDomX*0.5)/uOccDomX);
     if(any(lessThan(n, vec3(0.0))) || any(greaterThan(n, vec3(1.0)))) return 1.0;   // 域外一律按有云处理
     return texture(uOcc, n).r;
@@ -734,13 +734,17 @@
     gl.uniform1f(u.uMicroN, S.micro.dropConc);
     gl.uniform1f(u.uReMode, S.micro.reMode === 'derived' ? 1 : 0);
 
-    // ETH CLOUDLAB 人工播云下风向消散沟 uniform
+    // ETH CLOUDLAB 人工播云下风向消散沟 uniform（耦合催化剂成核温度阈值窗口因子 tFactor）
     const sd = S.seeding || {};
     const goRad = ((S.windDir || 270) + 180) * Math.PI / 180;
     const inpSat = 1 - Math.exp(-Math.max(0, sd.inpConc || 80) / 35);
-    const eff = Math.min(0.95, Math.max(0, (sd.glaciationEff != null ? sd.glaciationEff : 0.85) * inpSat));
+    const seedAlt = sd.alt != null ? sd.alt : 1.1;
+    const Tseed = Atmosphere.tempAt(seedAlt);
+    const thresh = sd.agent === 'co2' ? -0.5 : -4.0;
+    const tFactor = Tseed <= thresh ? 1.0 : (Tseed <= 2.0 ? 0.80 : 0.60);
+    const eff = Math.min(0.95, Math.max(0, (sd.glaciationEff != null ? sd.glaciationEff : 0.85) * inpSat * tFactor));
     gl.uniform1f(u.uSeedOn, sd.on ? 1 : 0);
-    gl.uniform3f(u.uSeedOrigin, sd.x0 != null ? sd.x0 : -8.0, sd.alt != null ? sd.alt : 1.1, sd.z0 != null ? sd.z0 : 0.0);
+    gl.uniform3f(u.uSeedOrigin, sd.x0 != null ? sd.x0 : -8.0, seedAlt, sd.z0 != null ? sd.z0 : 0.0);
     gl.uniform2f(u.uSeedDir, Math.sin(goRad), Math.cos(goRad));
     gl.uniform3f(u.uSeedParams, sd.width || 2.2, sd.diffK || 0.30, eff);
 

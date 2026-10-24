@@ -55,11 +55,17 @@
     const src = A.RADIOSONDE_SAMPLE;
     const layers = A.effectiveLayers();
     const wind = { x: A.STATE.windSpeed, dir: A.STATE.windDir };
+    const hasDetailed = !!(global.Physics && typeof global.Physics.detailedAt === 'function');
     const visPairs = [], tPairs = [];
     src.data.forEach(row => {
       const z = row[0], T = row[2], Td = row[3];
-      const f = A.sampleFields(0, 0, z, layers, wind, 0);
-      const beta = A.extinctionFromLWC(f.lwc, A.operativeRe(f.lwc));
+      let beta;
+      if (hasDetailed) {
+        beta = global.Physics.detailedAt(0, 0, z, layers, wind, 0).betaExt;
+      } else {
+        const f = A.sampleFields(0, 0, z, layers, wind, 0);
+        beta = A.extinctionFromLWC(f.lwc, A.operativeRe(f.lwc));
+      }
       const vis = A.visibilityFromExt(beta);
       const obsVis = obsVisFromSoundingRow(z, T, Td);
       visPairs.push({ z, obs: obsVis, model: isFinite(vis) ? Math.min(10000, vis) : 10000 });

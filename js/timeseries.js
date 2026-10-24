@@ -90,15 +90,21 @@
     return { t, env, layers };
   }
 
-  // 能见度随时间演变曲线（最坏高度）
+  // 能见度随时间演变曲线（最坏高度，计算完毕后无损还原调用前的场景状态）
   function visibilityCurve(n) {
     n = n || 64;
+    if (!TS.steps.length) return [];
+    const snap = A.serialize();
     const out = [];
-    for (let i = 0; i < n; i++) {
-      const t = TS.t0 + (TS.t1 - TS.t0) * i / (n - 1);
-      sampleAt(t);
-      const w = P.worstVisibilityDetailed(t);
-      out.push({ t, vis: isFinite(w.vis) ? w.vis : null, alt: w.alt });
+    try {
+      for (let i = 0; i < n; i++) {
+        const t = TS.t0 + (TS.t1 - TS.t0) * i / (n - 1);
+        sampleAt(t);
+        const w = P.worstVisibilityDetailed(t);
+        out.push({ t, vis: isFinite(w.vis) ? w.vis : null, alt: w.alt });
+      }
+    } finally {
+      A.deserialize(snap);
     }
     return out;
   }

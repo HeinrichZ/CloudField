@@ -299,11 +299,10 @@
     a.click();
   }
 
-  const DEFAULTS = JSON.parse(JSON.stringify(S));
+  const DEFAULTS = A.serialize();
   function resetParams() {
-    const def = JSON.parse(JSON.stringify(DEFAULTS));
-    Object.assign(S, def);
-    for (const k in def.layers) Object.assign(S.layers[k], def.layers[k]);
+    A.deserialize(JSON.parse(JSON.stringify(DEFAULTS)));
+    if (global.Kessler && global.Kessler.reset) global.Kessler.reset();
     build(); syncPlay(); notifyChange();
   }
 

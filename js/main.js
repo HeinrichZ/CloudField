@@ -122,7 +122,7 @@
         if (global.Kessler) {
           kesAcc = Math.min(0.5, kesAcc + dt * S.simSpeed);
           let guard = 0;
-          while (kesAcc >= 0.1 && guard++ < 8) { global.Kessler.step(0.1); kesAcc -= 0.1; }
+          while (kesAcc >= 0.1 && guard++ < 8) { global.Kessler.step(0.1, timeSec); kesAcc -= 0.1; }
         }
         // 环境慢变：180 s 周期，温度 ±2 °C、RH ∓5%；让温度/气压/湿度在演进中真实变化
         if (S.envCycle) {

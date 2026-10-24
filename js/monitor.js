@@ -108,8 +108,8 @@
     const S = A.STATE;
     switch (id) {
       case 'lwc': return f.lwc;
-      case 'beta': return A.betaFromLWC(f.lwc, A.operativeRe(f.lwc));
-      case 're': return A.operativeRe(f.lwc);
+      case 'beta': return f.betaExt != null ? f.betaExt * 1000 : A.betaFromLWC(f.lwc, A.operativeRe(f.lwc));
+      case 're': return f.reUm != null ? f.reUm : A.operativeRe(f.lwc);
       case 'Nd': return S.micro.dropConc;
       case 'temp': return f.temp;
       case 'pres': return f.pressure;
@@ -198,11 +198,14 @@
     const img = secImgData || offCtx.createImageData(SEC_N, SEC_N);
     const d = img.data;
     const invN = 2 / (SEC_N - 1);
+    const useDetailed = !!(field.id === 'beta' && global.Physics && typeof global.Physics.detailedAt === 'function');
     for (let j = 0; j < SEC_N; j++) {
       const y = (j * invN - 1) * range;
       for (let i = 0; i < SEC_N; i++) {
         const x = (i * invN - 1) * range;
-        const f = A.sampleFields(x, y, alt, layers, wind, timeSec);
+        const f = useDetailed
+          ? global.Physics.detailedAt(x, y, alt, layers, wind, timeSec)
+          : A.sampleFields(x, y, alt, layers, wind, timeSec);
         const c = CM.sample(field.id, fieldValue(f, field.id));
         const idx = (j * SEC_N + i) * 4;
         d[idx] = c[0]; d[idx + 1] = c[1]; d[idx + 2] = c[2]; d[idx + 3] = 255;
@@ -370,14 +373,18 @@
     if (histLen < HIST_N) history[histLen++] = shownVis;
     else { history.copyWithin(0, 1); history[HIST_N - 1] = shownVis; }
 
-    // 与显示高度同一位置取样（不再固定 (0,0) 列）；时间用当前仿真时间
-    const f = A.sampleFields(shownX, shownY, shownAlt, layers, wind, t);
+    // 与显示高度同一位置取样（不再固定 (0,0) 列）；统一接入 Physics.detailedAt 以反映相态、米氏修正、冰晶习惯与气溶胶
+    const det = (global.Physics && typeof global.Physics.detailedAt === 'function')
+      ? global.Physics.detailedAt(shownX, shownY, shownAlt, layers, wind, t)
+      : null;
+    const f = det || A.sampleFields(shownX, shownY, shownAlt, layers, wind, t);
     const lwc = f.lwc;
-    const re = A.operativeRe(lwc);                                // 与 β 共用同一 r_e 源
-    const betaKm = A.betaFromLWC(lwc, re);                        // km⁻¹
-    const betaM = betaKm / 1000;                                  // m⁻¹（公式用）
+    const re = det ? det.reUm : A.operativeRe(lwc);               // 与 β 共用同一 r_e 源
+    const betaM = det ? det.betaExt : (A.betaFromLWC(lwc, re) / 1000); // m⁻¹（含米氏/相态/气溶胶）
+    const betaKm = betaM * 1000;                                  // km⁻¹
     const N = S.micro.dropConc;
-    const reDeriv = A.effRadiusFromLWC(lwc, N);
+    const veffNow = det ? det.veff : ((S.spectrum && S.spectrum.veff) || 0);
+    const reDeriv = A.effRadiusFromLWC(lwc, N, veffNow);
     const kr = global.Kessler ? global.Kessler.readout() : null;
 
     // 高度轴上标出最低能见度所在高度（滞回后的稳定层高）
@@ -466,10 +473,15 @@
     }).join('|');
     const life = S.autoLife ? S.lifePhase.toFixed(2) : S.lifeManual.toFixed(2);
     const sd = S.seeding || {};
+    const sp = S.spectrum || {};
+    const ph = S.phases || {};
+    const ae = S.aerosol || {};
     return `${S.surfaceTemp},${S.surfacePressure},${S.surfaceRH},${S.lapseRate},${S.dewLapse},${S.dryLapseRate},` +
       `${(S.envT || 0).toFixed(2)},${(S.envRH || 0).toFixed(2)},${S.sliceAlt.toFixed(2)},${S.convection},${S.windSpeed},${S.windDir},` +
-      `${S.viewMode},${S.tintField},${S.micro.effRadiusUm},${S.micro.dropConc},${S.micro.reMode},${S.micro.scheme},` +
-      `${sd.on ? 1 : 0},${sd.agent},${sd.inpConc},${sd.glaciationEff},${life}|${lSig}`;
+      `${S.viewMode},${S.tintField},${S.micro.effRadiusUm},${S.micro.dropConc},${S.micro.reMode},${S.micro.scheme},${S.micro.iceFrac},${S.micro.autoPhaseTemp ? 1 : 0},` +
+      `${sp.type},${sp.re},${sp.N},${sp.veff},${sp.rg},${sp.sigmaG},${sp.measured ? sp.measured.length : 0},` +
+      `${ph.water},${ph.ice},${ph.snow},${ph.graupel},${ph.hail},${ae.on ? 1 : 0},${ae.beta0},${ae.scaleH},` +
+      `${sd.on ? 1 : 0},${sd.agent},${sd.inpConc},${sd.glaciationEff},${sd.alt},${sd.x0},${sd.z0},${sd.width},${sd.diffK},${life}|${lSig}`;
   }
   function update(timeSec) {
     const sig = stateSig();

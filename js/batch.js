@@ -28,13 +28,19 @@
   function run(config) {
     const stations = config.stations || [{ name: 'default', patch: null }];
     const times = config.times || [0];
+    const baseSnap = A.serialize();
     const rows = [];
-    stations.forEach(st => {
-      times.forEach(t => {
-        const r = runOne(st.patch, t);
-        rows.push(Object.assign({ station: st.name, t: +t.toFixed(2) }, r));
+    try {
+      stations.forEach(st => {
+        A.deserialize(baseSnap);
+        times.forEach(t => {
+          const r = runOne(st.patch, t);
+          rows.push(Object.assign({ station: st.name, t: +t.toFixed(2) }, r));
+        });
       });
-    });
+    } finally {
+      A.deserialize(baseSnap);
+    }
     return rows;
   }
 

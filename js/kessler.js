@@ -83,12 +83,15 @@
     return qc * inpRate * tempEff * altEff;
   }
 
-  function step(dt) {
+  const SAMPLE_PTS = [[0, 0], [-4, 0], [4, 0], [0, -4], [0, 4]];
+
+  function step(dt, timeSec) {
     const k = ensure();
     if (!k.on) return readout();
     const d = Math.min(0.5, Math.max(0, dt || 0));
     if (d <= 0) return readout();
     const scheme = (S.micro && S.micro.scheme) || 'kessler';
+    const t = timeSec || 0;
     let Pac = 0, Pgr = 0, Pwbf = 0, rain = 0;
     const layers = A.effectiveLayers();
     const wind = { x: S.windSpeed, dir: S.windDir };
@@ -96,8 +99,15 @@
       const key = L.key;
       const zMid = layerMid(L);
       const rho = Math.max(0.3, A.airDensityAt(zMid));
-      const f = A.sampleFields(0, 0, zMid, layers, wind, 0);
-      const qcT = Math.max(0, f.lwc) * 1e-3 / rho;       // kg/kg
+      // 5 点十字网格平均取未播撒背景目标云水（避免单点落入积云空隙，且消除播云空间沟槽与 wbfRate 的双重扣减）
+      let lwcSum = 0;
+      for (let p = 0; p < SAMPLE_PTS.length; p++) {
+        const f = A.sampleFields(SAMPLE_PTS[p][0], SAMPLE_PTS[p][1], zMid, layers, wind, t);
+        const lwcAmb = (f.seedDepletion && f.seedDepletion < 0.99) ? (f.lwc / (1 - f.seedDepletion)) : f.lwc;
+        lwcSum += Math.max(0, lwcAmb);
+      }
+      const lwcMean = lwcSum / SAMPLE_PTS.length;
+      const qcT = lwcMean * 1e-3 / rho;                   // kg/kg
       let qc = k.qc[key] || 0, qr = k.qr[key] || 0, qi = k.qi[key] || 0;
       // 凝结源：向目标云水松弛
       qc += (qcT - qc) * Math.min(1, d / TAU_COND);

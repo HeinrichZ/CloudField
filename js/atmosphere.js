@@ -268,11 +268,12 @@
     return f;
   }
   function sampleFields(x, y, z, layers, wind, time) {
-    const wDir = (wind && wind.dir) || 0;
+    const wDir = (wind && wind.dir != null) ? wind.dir : 270;
     const wSpd = (wind && wind.x) || 0;
-    const rad = wDir * 0.017453292519943295;
-    const wx = Math.sin(rad) * wSpd * WIND_SCALE;
-    const wz = Math.cos(rad) * wSpd * WIND_SCALE;
+    // 气象风向为来向，顺风平流方向需 +180°；上游回溯采样 p - u_go * t
+    const goRad = (wDir + 180) * 0.017453292519943295;
+    const wx = Math.sin(goRad) * wSpd * WIND_SCALE;
+    const wz = Math.cos(goRad) * wSpd * WIND_SCALE;
     const t = time || 0;
     const px = x - wx * t, py = y - wz * t;
     let density = 0, lwc = 0;
@@ -322,9 +323,10 @@
   }
   function lwcFromDensity(d, kind) { return Math.min(1, Math.max(0, d)) * LWC_MAX * (kind === 'ice' ? 0.4 : 1.0); }
   function betaFromLWC(lwc_gm3, reUm) { return 1500 * lwc_gm3 / Math.max(0.5, reUm); }
-  function effRadiusFromLWC(lwc_gm3, N_cm3) {
+  function effRadiusFromLWC(lwc_gm3, N_cm3, veff) {
     const lwcKg = lwc_gm3 / 1000, Nm3 = Math.max(1, N_cm3) * 1e6;
-    return 1e6 * Math.pow(Math.max(1e-20, 3 * lwcKg / (4 * Math.PI * RHO_W * Nm3)), 1 / 3);
+    const vFac = (veff != null && isFinite(veff) && veff > 0) ? (1 + 3 * veff) : 1;
+    return 1e6 * Math.pow(Math.max(1e-20, 3 * lwcKg / (4 * Math.PI * RHO_W * Nm3 * vFac)), 1 / 3);
   }
   function totalCloudCover() {
     let clear = 1;
@@ -338,10 +340,23 @@
       if (isFinite(mr) && mr > 0) return Math.max(0.5, mr);
     }
     const m = STATE.micro;
-    if (m.reMode === 'fixed') return Math.max(0.5, m.effRadiusUm);
-    return Math.min(60, Math.max(1, effRadiusFromLWC(lwcGm3, m.dropConc)));
+    if (m.reMode === 'fixed') {
+      if (STATE.spectrum && STATE.spectrum.type === 'lognormal' && global.Spectrum && typeof global.Spectrum.moments === 'function') {
+        const lr = global.Spectrum.moments().re;
+        if (isFinite(lr) && lr > 0) return Math.max(0.5, lr);
+      }
+      return Math.max(0.5, m.effRadiusUm);
+    }
+    const veff = (global.Physics && typeof global.Physics.currentVeff === 'function')
+      ? global.Physics.currentVeff()
+      : ((STATE.spectrum && isFinite(STATE.spectrum.veff)) ? STATE.spectrum.veff : 0);
+    return Math.min(60, Math.max(1, effRadiusFromLWC(lwcGm3, m.dropConc, veff)));
   }
   function visibilityAtAltitude(z, layers, wind, time) {
+    if (global.Physics && typeof global.Physics.detailedAt === 'function') {
+      const d = global.Physics.detailedAt(0, 0, z, layers, wind, time);
+      return { vis: visibilityFromExt(d.betaExt), beta: d.betaExt, lwc: d.lwc };
+    }
     const f = sampleFields(0, 0, z, layers, wind, time);
     const beta = extinctionFromLWC(f.lwc, operativeRe(f.lwc));
     return { vis: visibilityFromExt(beta), beta, lwc: f.lwc };
@@ -351,6 +366,7 @@
     const n = Math.max(1, opts.n || 3);
     const half = opts.half != null ? opts.half : 12;
     const dz = opts.dz || 0.5;
+    const hasDetailed = !!(global.Physics && typeof global.Physics.detailedAt === 'function');
     const prof = [], bxs = [], bys = [], bbs = [];
     let z0 = 0;
     for (let z = 0; z <= 13; z += dz) {
@@ -360,8 +376,13 @@
         const x = n === 1 ? 0 : -half + (2 * half) * ix / (n - 1);
         for (let iy = 0; iy < n; iy++) {
           const y = n === 1 ? 0 : -half + (2 * half) * iy / (n - 1);
-          const f = sampleFields(x, y, z, layers, wind, time);
-          const beta = extinctionFromLWC(f.lwc, operativeRe(f.lwc));
+          let beta;
+          if (hasDetailed) {
+            beta = global.Physics.detailedAt(x, y, z, layers, wind, time).betaExt;
+          } else {
+            const f = sampleFields(x, y, z, layers, wind, time);
+            beta = extinctionFromLWC(f.lwc, operativeRe(f.lwc));
+          }
           const vis = visibilityFromExt(beta);
           if (isFinite(vis) && vis < vz) { vz = vis; vx = x; vy = y; vb = beta; }
         }
@@ -457,10 +478,19 @@
     const src = sonde || RADIOSONDE_SAMPLE;
     const layers = effectiveLayers();
     const wind = { x: STATE.windSpeed, dir: STATE.windDir };
+    const hasDetailed = !!(global.Physics && typeof global.Physics.detailedAt === 'function');
     return src.data.map(row => {
       const z = row[0], p = row[1], T = row[2], Td = row[3];
-      const f = sampleFields(0, 0, z, layers, wind, 0);
-      const beta = extinctionFromLWC(f.lwc, operativeRe(f.lwc));
+      let lwc, beta;
+      if (hasDetailed) {
+        const d = global.Physics.detailedAt(0, 0, z, layers, wind, 0);
+        lwc = d.lwc;
+        beta = d.betaExt;
+      } else {
+        const f = sampleFields(0, 0, z, layers, wind, 0);
+        lwc = f.lwc;
+        beta = extinctionFromLWC(f.lwc, operativeRe(f.lwc));
+      }
       const vis = visibilityFromExt(beta);
       const dtd = Math.max(0, T - Td);
       const rh = 100 * Math.exp((17.27 * Td) / (237.7 + Td) - (17.27 * T) / (237.7 + T));
@@ -471,7 +501,7 @@
       } else {
         obsVis = Math.min(10000, Math.round(2500 + 7500 * Math.min(1, (100 - rh) / 35)));
       }
-      return { z, p, T, Td, obsVis, modelVis: isFinite(vis) ? vis : null, lwc: f.lwc, beta };
+      return { z, p, T, Td, obsVis, modelVis: isFinite(vis) ? vis : null, lwc, beta };
     });
   }
 
