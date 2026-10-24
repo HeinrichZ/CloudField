@@ -35,7 +35,8 @@
     const k1 = opts.k1 != null ? opts.k1 : S.micro.autoConvK;
     const qc0 = opts.qc0 != null ? opts.qc0 : S.micro.autoConvQc0;
     const k2 = opts.k2 != null ? opts.k2 : S.micro.accretK;
-    const N_cm3 = Math.max(10, opts.N != null ? opts.N : (S.micro.dropConc || 300));
+    const defN = A.operativeDropConc ? A.operativeDropConc() : (S.micro.dropConc || 300);
+    const N_cm3 = Math.max(10, opts.N != null ? opts.N : defN);
     const defaultVeff = (global.Physics && global.Physics.currentVeff) ? global.Physics.currentVeff() : ((S.spectrum && S.spectrum.veff) || 0.10);
     const veff = Math.max(0.02, Math.min(0.45, opts.veff != null ? opts.veff : defaultVeff));
     const rho = Math.max(0.3, opts.rho || 1.0);
@@ -71,13 +72,14 @@
   }
 
   // ETH CLOUDLAB 过冷水层云播云 WBF（Wegener–Bergeron–Findeisen）水汽竞争冰化速率 (kg/kg/s)
+  // 由 Murphy & Koop (2005) 过冷水与冰晶表面饱和水汽压差 Δe_wi(T) = e_s,w(T) − e_s,i(T) 直接驱动（在 -12.5°C 达热力学峰值）
   function wbfRate(qc, zMid) {
     const sd = S.seeding;
     if (!sd || !sd.on || qc <= 0) return 0;
     const T = A.tempAt(zMid);
     const thresh = sd.agent === 'co2' ? -0.5 : -4.0;
-    // WBF 凝华最大效率窗口在 -12 ~ -16°C（树枝状冰晶生长最快），过暖时回退演示速率
-    const tempEff = T <= thresh ? Math.min(1.2, 0.35 + Math.exp(-Math.pow((T + 14) / 8, 2))) : 0.30;
+    const wbf = A.wbfVaporDiff ? A.wbfVaporDiff(T) : { normFactor: Math.exp(-Math.pow((T + 12.5) / 8, 2)) };
+    const tempEff = T <= thresh ? Math.min(1.35, 0.35 + 1.0 * wbf.normFactor) : (T < 0 ? 0.25 + 0.45 * wbf.normFactor : 0.25);
     const altEff = Math.exp(-Math.pow((zMid - (sd.alt || 1.1)) / 1.2, 2));
     const inpRate = 1.8e-3 * (1 - Math.exp(-Math.max(0, sd.inpConc || 80) / 40));
     return qc * inpRate * tempEff * altEff;

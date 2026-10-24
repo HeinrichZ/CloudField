@@ -149,10 +149,14 @@
       'experiment:',
       '  scheme: ' + (S.micro.scheme || 'kessler'),
       '  re_mode: ' + (S.micro.reMode || 'derived'),
-      '  droplet_conc_cm3: ' + S.micro.dropConc,
+      '  droplet_conc_cm3: ' + (A.operativeDropConc ? A.operativeDropConc().toFixed(1) : S.micro.dropConc),
+      '  ccn_coupled: ' + (!!S.micro.ccnCoupled),
       '  effective_radius_um: ' + Number(r.re).toFixed(2),
       '  spectral_veff: ' + Number((P && P.currentVeff) ? P.currentVeff() : ((S.spectrum && S.spectrum.veff) || 0.10)).toFixed(3),
       '  korolev_temp_phase: ' + (!!S.micro.autoPhaseTemp),
+      '  lwp_gm2: ' + (r.ops && r.ops.lwp != null ? r.ops.lwp.toFixed(2) : '0.00'),
+      '  iwp_gm2: ' + (r.ops && r.ops.iwp != null ? r.ops.iwp.toFixed(2) : '0.00'),
+      '  cre_sw_wm2: ' + (r.ops && r.ops.creSW != null ? r.ops.creSW.toFixed(2) : '0.00'),
       'scheme_comparison_at_current_N:',
       '  rain_rate_mm_h:',
       '    kessler_1969: ' + (cmp ? cmp.atCurrentN.kessler.toFixed(3) : '0.000'),
@@ -162,11 +166,81 @@
       '  enabled: ' + (!!(S.seeding && S.seeding.on)),
       '  agent: ' + ((S.seeding && S.seeding.agent) || 'agi'),
       '  inp_conc_L: ' + ((S.seeding && S.seeding.inpConc) || 80),
+      '  wbf_diff_hpa: ' + (sdDiag && sdDiag.wbfDiffHpa != null ? sdDiag.wbfDiffHpa.toFixed(4) : '0.0000'),
+      '  ice_supersat_pct: ' + (sdDiag && sdDiag.iceSupersatPct != null ? sdDiag.iceSupersatPct.toFixed(2) : '0.00'),
       '  ambient_visibility_m: ' + (sdDiag ? Math.round(sdDiag.visAmbientM) : 'NA'),
       '  in_plume_visibility_m: ' + (sdDiag ? Math.round(sdDiag.visSeededM) : 'NA'),
       '  visibility_gain_ratio: ' + (sdDiag ? sdDiag.gainRatio.toFixed(2) : '1.00'),
       '  cat1_minima_recovered: ' + (sdDiag ? sdDiag.cat1Recovered : false),
     ].join('\n');
+  }
+
+  // —— 科研级垂直廓线 CSV 导出（0–14 km，Δz = 0.25 km，57 层完整热力与微物理廓线）——
+  function toProfileCSV(time) {
+    const t = time || 0;
+    const layers = A.effectiveLayers();
+    const wind = { x: S.windSpeed, dir: S.windDir };
+    const header = 'z_km,p_hPa,T_degC,Td_degC,RH_pct,esw_hPa,esi_hPa,wbf_diff_hPa,LWC_gm3,IWC_gm3,ice_frac,re_um,beta_ext_m1,vis_m';
+    const lines = [header];
+    for (let z = 0; z <= 14.0001; z += 0.25) {
+      const zz = Number(z.toFixed(2));
+      const d = P.detailedAt(0, 0, zz, layers, wind, t);
+      const T = d.temp;
+      const Td = d.dew;
+      const esw = A.esWater ? A.esWater(T) : 6.112 * Math.exp((17.67 * T) / (T + 243.5));
+      const ed = A.esWater ? A.esWater(Td) : 6.112 * Math.exp((17.67 * Td) / (Td + 243.5));
+      const rh = Math.max(0, Math.min(100, (ed / Math.max(1e-6, esw)) * 100));
+      const wbf = A.wbfVaporDiff ? A.wbfVaporDiff(T) : { esw, esi: esw, diffHpa: 0 };
+      const fw = d.frac ? (d.frac.water || 0) : 1;
+      const fi = Math.max(0, 1 - fw);
+      const lwcLiq = d.lwc * fw;
+      const iwcIce = d.lwc * fi;
+      const vis = A.visibilityFromExt(d.betaExt);
+      const visVal = isFinite(vis) ? Math.min(99999, vis) : 99999;
+      lines.push([
+        zz.toFixed(2),
+        d.pressure.toFixed(2),
+        T.toFixed(2),
+        Td.toFixed(2),
+        rh.toFixed(1),
+        wbf.esw.toFixed(4),
+        wbf.esi.toFixed(4),
+        wbf.diffHpa.toFixed(4),
+        lwcLiq.toFixed(4),
+        iwcIce.toFixed(4),
+        fi.toFixed(3),
+        d.reUm.toFixed(2),
+        d.betaExt.toExponential(4),
+        visVal.toFixed(1),
+      ].join(','));
+    }
+    return lines.join('\n');
+  }
+
+  // —— 三方案（Kessler / KK2000 / ICON-SB06）随云滴数浓度 N_c 响应曲线 CSV 导出 ——
+  function toSchemeCSV(opts) {
+    if (!global.Kessler || !global.Kessler.compareSchemes) return 'N_cm3,R_kessler_mmh,R_kk2000_mmh,R_sb06_mmh\n';
+    const cmp = global.Kessler.compareSchemes(opts);
+    const qc = cmp.qc || 1.2e-3;
+    const qr = 1.0e-4;
+    const header = 'N_cm3,R_kessler_mmh,R_kk2000_mmh,R_sb06_mmh,Pac_kessler_s1,Pac_kk2000_s1,Pac_sb06_s1';
+    const lines = [header];
+    for (let i = 0; i < cmp.N.length; i++) {
+      const nv = cmp.N[i];
+      const rK = global.Kessler.ratesForScheme('kessler', qc, qr, { N: nv });
+      const rKK = global.Kessler.ratesForScheme('kk2000', qc, qr, { N: nv });
+      const rSB = global.Kessler.ratesForScheme('sb06', qc, qr, { N: nv, rho: 1.0 });
+      lines.push([
+        nv.toFixed(1),
+        cmp.kessler[i].toFixed(4),
+        cmp.kk2000[i].toFixed(4),
+        cmp.sb06[i].toFixed(4),
+        rK.pac.toExponential(4),
+        rKK.pac.toExponential(4),
+        rSB.pac.toExponential(4),
+      ].join(','));
+    }
+    return lines.join('\n');
   }
 
   // —— 推送到业务系统（fetch 桩）——
@@ -182,5 +256,5 @@
     }).then(r => r.ok ? r : Promise.reject(new Error('HTTP ' + r.status)));
   }
 
-  global.Exporter = { toMETAR, toIWXXM, toBUFR, toGRIB, toICONNamelist, toExperimentYAML, pushTo, readouts };
+  global.Exporter = { toMETAR, toIWXXM, toBUFR, toGRIB, toICONNamelist, toExperimentYAML, toProfileCSV, toSchemeCSV, pushTo, readouts };
 })(window);

@@ -198,12 +198,16 @@
     const visAmb = isFinite(amb.vis) ? amb.vis : 99999;
     const visSeed = isFinite(seeded.vis) ? seeded.vis : 99999;
     const gainRatio = visAmb > 0 ? visSeed / visAmb : 1;
+    const tPlume = A.tempAt(z);
+    const wbf = A.wbfVaporDiff ? A.wbfVaporDiff(tPlume) : { diffHpa: 0, siPct: 0 };
     return {
       active: prevOn,
       agent: sd.agent || 'agi',
       inpConc: sd.inpConc || 80,
       altKm: z,
-      tempC: A.tempAt(z),
+      tempC: tPlume,
+      wbfDiffHpa: wbf.diffHpa,
+      iceSupersatPct: wbf.siPct,
       visAmbientM: visAmb,
       visSeededM: visSeed,
       ambientVis: visAmb,
@@ -275,10 +279,11 @@
   function sensitivityOpen(pa, pb, opts) {
     opts = opts || {};
     const N = Math.max(4, Math.min(48, Math.round(opts.N || 20)));
-    const metric = opts.metric === 'opticalDepth' ? 'opticalDepth' : 'vis';
+    const VALID_METRICS = ['vis', 'opticalDepth', 'rainRate', 'albedo'];
+    const metric = VALID_METRICS.indexOf(opts.metric) >= 0 ? opts.metric : 'vis';
     const time = isFinite(opts.time) ? opts.time : 0;
     const dz = opts.dz || SEN_DZ;
-    const offs = metric === 'opticalDepth' ? [[0, 0]] : (opts.offsets || SEN_OFFS);
+    const offs = metric === 'vis' ? (opts.offsets || SEN_OFFS) : [[0, 0]];
 
     const undo = [];
     function activate(path) {
@@ -308,6 +313,34 @@
         let od = 0;
         for (let z = 0; z <= 14; z += dz) od += detailedAt(0, 0, z, layers, wind, time).betaExt * (dz * 1000);
         return od;
+      }
+      if (metric === 'albedo') {
+        if (global.Operators && global.Operators.cloudAlbedo) return global.Operators.cloudAlbedo(time);
+        let od = 0;
+        for (let z = 0; z <= 14; z += dz) od += detailedAt(0, 0, z, layers, wind, time).betaExt * (dz * 1000);
+        return od / (od + 8.9);
+      }
+      if (metric === 'rainRate') {
+        let maxLwc = 0, zAtMax = 1.1;
+        for (let z = 0.25; z <= 6; z += 0.5) {
+          const d = detailedAt(0, 0, z, layers, wind, time);
+          if (d.lwc > maxLwc) { maxLwc = d.lwc; zAtMax = z; }
+        }
+        const qc = Math.max(0.2e-3, maxLwc * 1.2e-3);
+        if (global.Kessler && global.Kessler.ratesForScheme) {
+          const sch = (S.micro && S.micro.scheme) || 'kessler';
+          let qr = 1e-5, rMmH = 0;
+          const pwbf = global.Kessler.wbfRate ? global.Kessler.wbfRate(qc, zAtMax) : 0;
+          for (let step = 0; step < 30; step++) {
+            const rt = global.Kessler.ratesForScheme(sch, qc, qr, { rho: 1.0 });
+            const prod = rt.pac + rt.pgr + pwbf;
+            const fall = qr * 4.5 / 1200;
+            qr = Math.max(0, qr + (prod - fall) * 20);
+            rMmH = fall * 1.0 * 1200 * 3600;
+          }
+          return rMmH;
+        }
+        return 0;
       }
       let worst = Infinity;
       for (let k = 0; k < offs.length; k++) {

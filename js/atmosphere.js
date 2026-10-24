@@ -76,6 +76,7 @@
       accretK: 2.2,           // 碰并( accretion )系数 k2
       iceFrac: 0.0,           // 混合相冰相占比 0–1（与 phases.ice 同步联动）
       autoPhaseTemp: false,   // 按温度廓线自动分配混合相冰/水比（Korolev 0 ~ -38°C 区间）
+      ccnCoupled: false,      // 气溶胶–上升气流 Köhler/Twomey 活化耦合（由 β_aer 与对流 w 动态决定 N_c）
       reMode: 'derived',      // r_e 来源：derived = 由 LWC 与 N 反推；fixed = 用 effRadiusUm 滑块
     },
 
@@ -171,6 +172,40 @@
     return Math.max(0, T0 / STATE.lapseRate);
   }
 
+  // Murphy & Koop (2005) / Bolton (1980) 液态水与冰晶表面饱和水汽压 (hPa) 及 WBF 热力学水汽压差 Δe_wi(T)
+  function esWater(T) {
+    return 6.112 * Math.exp((17.67 * T) / (T + 243.5));
+  }
+  function esIce(T) {
+    if (T >= 0) return esWater(T);
+    return 6.1115 * Math.exp((22.46 * T) / (T + 272.62));
+  }
+  function wbfVaporDiff(T) {
+    const esw = esWater(T);
+    if (T >= 0) return { esw, esi: esw, diffHpa: 0, siPct: 0, normFactor: 0 };
+    const esi = esIce(T);
+    const diffHpa = Math.max(0, esw - esi);                  // 在 T ≈ -12.5°C 达热力学极大值 ~0.268 hPa
+    const siPct = Math.max(0, (esw / Math.max(1e-6, esi) - 1) * 100);
+    const normFactor = Math.min(1.25, diffHpa / 0.268);
+    return { esw, esi, diffHpa, siPct, normFactor };
+  }
+
+  // Twomey (1959) / Abdul-Razzak & Ghan (2000) 气溶胶-上升气流云滴活化参数化：
+  // 由背景气溶胶消光系数 β_0 与对流上升速度 w 计算活化云滴数浓度 N_c (cm⁻³)
+  function operativeDropConc() {
+    const m = STATE.micro || {};
+    if (!m.ccnCoupled) return Math.max(10, m.dropConc || 300);
+    const a = STATE.aerosol || {};
+    const beta0 = a.on ? Math.max(1e-5, a.beta0 || 1e-4) : 1e-4;
+    const Na = Math.min(4000, Math.max(40, 2.2e6 * Math.pow(beta0, 0.92))); // 等效 CCN 数浓度 cm⁻³
+    const w = 0.15 + 3.5 * (Math.max(0, STATE.convection || 0) / 100);      // 特征云底上升气流速度 m/s
+    const wPow = Math.pow(w, 0.45);
+    const Nc = (Na * wPow) / (wPow + 0.045 * Math.pow(Na, 0.60));
+    const res = Math.round(Math.min(1500, Math.max(20, Nc)));
+    m.dropConc = res;
+    return res;
+  }
+
   // 温度自适应或手动统一的冰相比例（打通 micro.iceFrac 与 phases.ice）
   function iceFractionAt(z) {
     if (STATE.micro && STATE.micro.autoPhaseTemp && z != null) {
@@ -195,7 +230,10 @@
 
     const T = tempAt(z);
     const thresh = sd.agent === 'co2' ? -0.5 : -4.0;
-    const tFactor = T <= thresh ? 1.0 : (T <= 2.0 ? 0.80 : 0.60);
+    const wbf = wbfVaporDiff(T);
+    const tFactor = T <= thresh
+      ? Math.min(1.15, 0.72 + 0.43 * wbf.normFactor)
+      : (T < 0 ? 0.55 + 0.30 * wbf.normFactor : 0.60);
 
     const goRad = ((STATE.windDir || 270) + 180) * Math.PI / 180;
     const ux = Math.sin(goRad), uy = Math.cos(goRad);
@@ -350,7 +388,7 @@
     const veff = (global.Physics && typeof global.Physics.currentVeff === 'function')
       ? global.Physics.currentVeff()
       : ((STATE.spectrum && isFinite(STATE.spectrum.veff)) ? STATE.spectrum.veff : 0);
-    return Math.min(60, Math.max(1, effRadiusFromLWC(lwcGm3, m.dropConc, veff)));
+    return Math.min(60, Math.max(1, effRadiusFromLWC(lwcGm3, operativeDropConc(), veff)));
   }
   function visibilityAtAltitude(z, layers, wind, time) {
     if (global.Physics && typeof global.Physics.detailedAt === 'function') {
@@ -559,6 +597,7 @@
     APP_NAME, SNAPSHOT_VERSION, CLOUD_META, LAYER_ORDER, STATE, SCHEME_LABELS,
     LWC_MAX, KOSCHMEIER_EPS, RHO_W, MAX_ALT, WIND_SCALE,
     lclHeight, tempAt, dewAt, dewpointFromRH, pressureAt, airDensityAt, freezingLevel,
+    esWater, esIce, wbfVaporDiff, operativeDropConc,
     iceFractionAt, seedingPlumeAt, seedingDepletionAt, seedingIceBoostAt,
     effectiveLayers, sampleFields,
     extinctionFromLWC, visibilityFromExt, visibilityAtAltitude, worstVisibility,

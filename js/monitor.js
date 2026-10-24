@@ -173,6 +173,46 @@
     curve(z => A.tempAt(z), '#ff6b6b', []);
     curve(z => A.dewAt(z), '#4fd1ff', [4, 3]);
 
+    // 叠加垂直液态/总含水量廓线 LWC(z) [0..1.5 g/m³] 与冰相质量分数 f_ice(z) [0..1]
+    if (global.Physics && typeof global.Physics.detailedAt === 'function') {
+      const wind = { x: A.STATE.windSpeed, dir: A.STATE.windDir };
+      const xOfLwc = v => padL + clamp(v / 1.5, 0, 1) * pw;
+      const xOfIce = f => padL + clamp(f, 0, 1) * pw;
+      ctx.fillStyle = 'rgba(54, 209, 196, 0.14)';
+      ctx.beginPath();
+      ctx.moveTo(padL, yOf(0));
+      const ptsLwc = [], ptsIce = [];
+      for (let z = 0; z <= MAX + 1e-4; z += 0.25) {
+        const d = global.Physics.detailedAt(0, 0, z, layers, wind, 0);
+        const y = yOf(z);
+        const xl = xOfLwc(d.lwc);
+        const fi = d.frac ? Math.max(0, 1 - (d.frac.water || 0)) : 0;
+        ptsLwc.push([xl, y]);
+        ptsIce.push([xOfIce(fi), y]);
+        ctx.lineTo(xl, y);
+      }
+      ctx.lineTo(padL, yOf(MAX));
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = '#36d1c4'; ctx.lineWidth = 1.4; ctx.setLineDash([]);
+      ctx.beginPath();
+      for (let i = 0; i < ptsLwc.length; i++) {
+        if (i === 0) ctx.moveTo(ptsLwc[i][0], ptsLwc[i][1]);
+        else ctx.lineTo(ptsLwc[i][0], ptsLwc[i][1]);
+      }
+      ctx.stroke();
+
+      ctx.strokeStyle = '#b592ff'; ctx.lineWidth = 1.2; ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      for (let i = 0; i < ptsIce.length; i++) {
+        if (i === 0) ctx.moveTo(ptsIce[i][0], ptsIce[i][1]);
+        else ctx.lineTo(ptsIce[i][0], ptsIce[i][1]);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     const mark = (z, color, text) => {
       if (!(z >= 0 && z <= MAX)) return;
       const y = yOf(z);
@@ -496,7 +536,7 @@
     const ae = S.aerosol || {};
     return `${S.surfaceTemp},${S.surfacePressure},${S.surfaceRH},${S.lapseRate},${S.dewLapse},${S.dryLapseRate},` +
       `${(S.envT || 0).toFixed(2)},${(S.envRH || 0).toFixed(2)},${S.sliceAlt.toFixed(2)},${S.convection},${S.windSpeed},${S.windDir},` +
-      `${S.viewMode},${S.tintField},${S.micro.effRadiusUm},${S.micro.dropConc},${S.micro.reMode},${S.micro.scheme},${S.micro.iceFrac},${S.micro.autoPhaseTemp ? 1 : 0},` +
+      `${S.viewMode},${S.tintField},${S.micro.effRadiusUm},${S.micro.dropConc},${S.micro.ccnCoupled ? 1 : 0},${S.micro.reMode},${S.micro.scheme},${S.micro.iceFrac},${S.micro.autoPhaseTemp ? 1 : 0},` +
       `${sp.type},${sp.re},${sp.N},${sp.veff},${sp.rg},${sp.sigmaG},${sp.measured ? sp.measured.length : 0},` +
       `${ph.water},${ph.ice},${ph.snow},${ph.graupel},${ph.hail},${ae.on ? 1 : 0},${ae.beta0},${ae.scaleH},` +
       `${S.kessler ? (S.kessler.rainRate || 0).toFixed(2) : 0},` +

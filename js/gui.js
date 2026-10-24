@@ -242,6 +242,7 @@
       ], () => S.micro.scheme || 'kessler', v => { S.micro.scheme = v; if (global.Kessler) global.Kessler.reset(); }, I18N.t('const.scheme.tip')),
       rangeCtrl(I18N.t('const.re'), 2, 25, 0.5, 'µm', () => S.micro.effRadiusUm, v => S.micro.effRadiusUm = v, x => x.toFixed(1), I18N.t('const.re.tip')),
       rangeCtrl(I18N.t('const.N'), 10, 1000, 10, 'cm⁻³', () => S.micro.dropConc, v => S.micro.dropConc = v, x => x.toFixed(0), I18N.t('const.N.tip')),
+      toggleCtrl('CCN 活化耦合 (β_aer+w → N_c)', () => !!S.micro.ccnCoupled, v => { S.micro.ccnCoupled = v; if (v && A.operativeDropConc) A.operativeDropConc(); }, 'Twomey / Abdul-Razzak 气溶胶与上升气流耦合活化云滴数浓度 N_c'),
       toggleCtrl(I18N.t('const.reMode'), () => S.micro.reMode === 'derived', v => S.micro.reMode = v ? 'derived' : 'fixed', I18N.t('const.reMode.tip')),
       rangeCtrl(I18N.t('const.k1'), 0.1, 5, 0.1, '×10⁻³', () => S.micro.autoConvK * 1000, v => S.micro.autoConvK = v / 1000, x => x.toFixed(1), I18N.t('const.k1.tip')),
       rangeCtrl(I18N.t('const.qc0'), 0.1, 2, 0.1, '×10⁻³', () => S.micro.autoConvQc0 * 1000, v => S.micro.autoConvQc0 = v / 1000, x => x.toFixed(1), I18N.t('const.qc0.tip')),
@@ -424,11 +425,15 @@
       }
       if (global.Physics && global.Physics.seedingDiagnostics) {
         const sd = global.Physics.seedingDiagnostics(0);
+        const ops = global.Operators && global.Operators.compute ? global.Operators.compute(0, { all: true }) : null;
         seedStats.innerHTML =
           card(I18N.t('cl.visAmb'), Math.round(sd.visAmbientM) + ' m') +
           card(I18N.t('cl.visSeed'), Math.round(sd.visSeededM) + ' m') +
           card(I18N.t('cl.gain'), sd.gainRatio.toFixed(2) + '×') +
-          card('CAT-I (≥550m)', sd.cat1Recovered ? '✓ OK' : '✗');
+          card('CAT-I (≥550m)', sd.cat1Recovered ? '✓ OK' : '✗') +
+          card('Δe_wi / S_i', (sd.wbfDiffHpa != null ? sd.wbfDiffHpa.toFixed(3) : '0.000') + ' hPa · ' + (sd.iceSupersatPct != null ? sd.iceSupersatPct.toFixed(1) : '0.0') + '%') +
+          (ops ? card('LWP / IWP', (ops.lwp || 0).toFixed(0) + ' / ' + (ops.iwp || 0).toFixed(0) + ' g/m²') +
+                 card('CRE_SW / ΔF_Tw', (ops.creSW || 0).toFixed(1) + ' / ' + (ops.twomeyForcing || 0).toFixed(1) + ' W/m²') : '');
       }
     }
     setTimeout(refreshCloudLab, 0);
@@ -489,6 +494,8 @@
         const o = global.Operators.compute(0);
         const rows = [];
         if (o.visibility) rows.push(card(I18N.t('op.visibility'), (isFinite(o.visibility.vis) ? o.visibility.vis.toFixed(0) : '—') + ' m'));
+        if (o.lwp != null) rows.push(card('LWP / IWP', o.lwp.toFixed(1) + ' / ' + (o.iwp || 0).toFixed(1) + ' g/m²'));
+        if (o.creSW != null) rows.push(card('CRE_SW', o.creSW.toFixed(1) + ' W/m²'));
         if (o.irradiance) rows.push(card(I18N.t('op.irradiance'), o.irradiance.total.toFixed(0) + ' W/m²'));
         if (o.albedo != null) rows.push(card(I18N.t('op.albedo'), o.albedo.toFixed(3)));
         if (o.satelliteTb != null) rows.push(card(I18N.t('op.satellite'), o.satelliteTb.toFixed(1) + ' K'));
@@ -528,7 +535,16 @@
     const wrapSel = (label, sel) => { const w = document.createElement('div'); w.className = 'ctrl'; w.innerHTML = '<div class="row"><label>' + label + '</label></div>'; w.appendChild(sel); return w; };
     const sa = mkSel(I18N.t('sen.paramA'), 'micro.dropConc'); root.appendChild(sa);
     const sb = mkSel(I18N.t('sen.paramB'), 'layers.sc.coverage'); root.appendChild(sb);
-    const metric = wrapSel(I18N.t('sen.metric'), (() => { const s = document.createElement('select'); s.innerHTML = opt([['vis', I18N.t('sen.vis')], ['opticalDepth', I18N.t('sen.od')]]); return s; })());
+    const metric = wrapSel(I18N.t('sen.metric'), (() => {
+      const s = document.createElement('select');
+      s.innerHTML = opt([
+        ['vis', I18N.t('sen.vis')],
+        ['opticalDepth', I18N.t('sen.od')],
+        ['rainRate', '降水率 R (mm/h)'],
+        ['albedo', '云反照率 Albedo'],
+      ]);
+      return s;
+    })());
     root.appendChild(metric);
     const cv = document.createElement('canvas'); cv.id = 'sen-heat';
     cv.width = 340; cv.height = 240; cv.className = 'adv-canvas'; root.appendChild(cv);
@@ -555,7 +571,7 @@
       const selA = sa.querySelector('select'), selB = sb.querySelector('select');
       const pa = paramRange(selA.value, selA.options[selA.selectedIndex].textContent);
       const pb = paramRange(selB.value, selB.options[selB.selectedIndex].textContent);
-      const mv = metric.querySelector('select').value === 'opticalDepth' ? 'opticalDepth' : 'vis';
+      const mv = metric.querySelector('select').value || 'vis';
       // 上一次任务若还没跑完，先回滚它改过的状态
       if (job && job.restore) { try { job.restore(); } catch (err) { } }
       const my = ++token;
@@ -630,6 +646,8 @@
     row.appendChild(btn(I18N.t('ex.grib'), () => { curFile = 'CloudField.grib.json'; ta.value = JSON.stringify(global.Exporter.toGRIB(), null, 2); }));
     row.appendChild(btn(I18N.t('ex.icon'), () => { curFile = 'icon_microphysics.nml'; ta.value = global.Exporter.toICONNamelist(); }));
     row.appendChild(btn(I18N.t('ex.yaml'), () => { curFile = 'cloudlab_experiment.yaml'; ta.value = global.Exporter.toExperimentYAML(); }));
+    row.appendChild(btn('Profile CSV', () => { curFile = 'CloudField_profile.csv'; ta.value = global.Exporter.toProfileCSV(0); }));
+    row.appendChild(btn('Schemes CSV', () => { curFile = 'CloudField_schemes.csv'; ta.value = global.Exporter.toSchemeCSV(); }));
     row.appendChild(btn(I18N.t('ex.copy'), () => { if (navigator.clipboard) navigator.clipboard.writeText(ta.value); }));
     row.appendChild(btn('⬇ ' + I18N.t('tb.export'), () => {
       if (!ta.value) { curFile = 'icon_microphysics.nml'; ta.value = global.Exporter.toICONNamelist(); }

@@ -14,23 +14,29 @@
   const SAMPLE_PTS = [[0, 0], [-4, 0], [4, 0], [0, -4], [0, 4]];
 
   function columnStats(time) {
-    let od = 0, scaSum = 0, extSum = 0, gWeightedSum = 0;
+    let od = 0, scaSum = 0, extSum = 0, gWeightedSum = 0, lwpSum = 0, iwpSum = 0;
     const layers = A.effectiveLayers(), wind = { x: S.windSpeed, dir: S.windDir };
     const nPts = SAMPLE_PTS.length;
     for (let p = 0; p < nPts; p++) {
       const sx = SAMPLE_PTS[p][0], sy = SAMPLE_PTS[p][1];
       for (let z = 0; z <= 14; z += 0.25) {
         const d = P.detailedAt(sx, sy, z, layers, wind, time || 0);
-        od += d.betaExt * 250;      // β 为 m⁻¹，Δz = 0.25 km = 250 m → 无量纲光学厚度
+        const dzM = 250;            // Δz = 0.25 km = 250 m
+        od += d.betaExt * dzM;      // β 为 m⁻¹，无量纲光学厚度
         extSum += d.betaExt;
         scaSum += d.betaSca;
         gWeightedSum += d.betaSca * (d.gMix != null ? d.gMix : 0.85);
+        const fw = d.frac ? (d.frac.water || 0) : 1;
+        lwpSum += (d.lwc * fw) * dzM;         // g/m³ × m = g/m²
+        iwpSum += (d.lwc * (1 - fw)) * dzM;   // g/m²
       }
     }
     od /= nPts;
+    const lwp = lwpSum / nPts;
+    const iwp = iwpSum / nPts;
     const omegaMix = extSum > 0 ? scaSum / extSum : 0.999;
     const gMix = scaSum > 0 ? gWeightedSum / scaSum : 0.85;
-    return { od, omegaMix, gMix };
+    return { od, omegaMix, gMix, lwp, iwp, twp: lwp + iwp };
   }
 
   function columnOpticalDepth(time, csCached) {
@@ -174,7 +180,7 @@
     const pick = k => all || on[k] !== false;
     // 单次计算 columnStats 并复用于 opticalDepth / irradiance / albedo / satelliteTb，省去 3 次重复的 5×57 层积分
     const cs = columnStats(time);
-    const out = { opticalDepth: cs.od };
+    const out = { opticalDepth: cs.od, lwp: cs.lwp, iwp: cs.iwp, twp: cs.twp };
     let w = null;
     const needW = pick('visibility') || pick('extSplit');
     if (needW && global.Physics) w = global.Physics.worstVisibilityDetailed(time || 0);
@@ -185,6 +191,17 @@
     }
     if (pick('irradiance')) out.irradiance = irradiance(time, cs);
     if (pick('albedo')) out.albedo = cloudAlbedo(time, cs);
+    // 短波云辐射强迫 CRE_SW (W/m²) 与 Twomey 第一间接效应强迫 ΔF_Twomey (相对清洁大陆基线 N_0=80 cm⁻³)
+    const cosZ = Math.max(0.05, Math.sin((S.sunElev || 35) * Math.PI / 180));
+    const albNow = out.albedo != null ? out.albedo : cloudAlbedo(time, cs);
+    const sfcAlb = 0.12;
+    out.creSW = -S0 * cosZ * Math.max(0, albNow - sfcAlb) * (1 - sfcAlb);
+    const nEff = (A.operativeDropConc ? A.operativeDropConc() : (S.micro.dropConc || 200));
+    const tauClean = cs.od * Math.pow(80 / Math.max(10, nEff), 1 / 3);
+    const albClean = global.Radiation
+      ? global.Radiation.reflectance(tauClean, cosZ, cs.omegaMix, cs.gMix)
+      : (tauClean / (tauClean + 4 / (3 * (1 - (cs.gMix || 0.85)))));
+    out.twomeyForcing = -S0 * cosZ * (albNow - albClean) * (1 - sfcAlb);
     if (pick('satellite')) out.satelliteTb = satelliteTb(time, cs);
     if (pick('lidar')) out.lidar = lidar(time);
     if (pick('radar')) out.radar = radar(time);

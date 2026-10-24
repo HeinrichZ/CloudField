@@ -740,7 +740,7 @@ const bufr = win.Exporter.toBUFR();
 const bufrDew = bufr.fields.find(x => x.f === 'dewpoint').v;
 ok(Math.abs(bufrDew - Number(Amod.dewAt(0).toFixed(2))) < 1e-6, 'BUFR 导出露点采用 Magnus 公式与主模型严格一致');
 
-// 6) 科学性与工程可靠性加固验证（双流厚云渐近反照率、WBF 两阶段冰化羽流、红外亮温边界、雷达-方案耦合、泰勒图非退化、Recorder 播云快照）
+// 6) 辐射渐近反照率、WBF 两阶段羽流、红外亮温、雷达-方案联动与探空统计校验
 const rThick = Rad.reflectance(128, 0.5, 0.999, 0.85);
 ok(rThick > 0.78 && rThick < 1.0, '双流辐射：厚云极限 (τ=128) 反照率收敛于渐近极限 R_∞ > 0.78（不归零）', rThick.toFixed(3));
 
@@ -777,7 +777,7 @@ ok(recCap && recCap.seeding && typeof recCap.seeding.inpConc === 'number', 'Reco
 const repHtml = win.Report.generateHTML();
 ok(/CLOUDLAB/.test(repHtml) && /三方案雨强/.test(repHtml), 'Report.generateHTML 包含三方案雨强对比与 CLOUDLAB 播云诊断');
 
-// 7) 水平切片坐标轴修复与公式 Tab 动态方案联动验证
+// 7) 水平切片坐标轴与探空参考能见度校验
 const svSliceAlt = Amod.STATE.sliceAlt, svScOn2 = Amod.STATE.layers.sc.on, svScBase2 = Amod.STATE.layers.sc.base, svScTop2 = Amod.STATE.layers.sc.top;
 Amod.STATE.layers.sc.on = true; Amod.STATE.layers.sc.base = 0.4; Amod.STATE.layers.sc.top = 1.8; Amod.STATE.layers.sc.coverage = 0.9; Amod.STATE.layers.sc.density = 0.85;
 Amod.STATE.sliceAlt = 1.0;
@@ -791,11 +791,11 @@ const sondeRows = Amod.validateAgainstRadiosonde();
 ok(sondeRows.length > 0 && sondeRows.every(r => typeof r.obsVis === 'number' && r.obsVis > 0),
   'validateAgainstRadiosonde 返回逐层探空观测参考能见度 obsVis');
 
-// 8) 第二轮深度科学可靠性与工程自洽性验证（平流符号、主界面详细消光打通、对数正态谱互逆、Batch/TimeSeries 状态隔离）
+// 8) 平流符号、详细消光接入、对数正态谱互逆、Batch/TimeSeries 状态还原校验
 ok(clouds.indexOf('p.x - uWind.x * uTime') > 0 && clouds.indexOf('p.x - uWind.x*uTime') > 0,
   '3D 着色器云体与 Occupancy 采样均采用顺风向上游回溯 (p - uWind * uTime)');
 
-// 主模型 worstVisibility 与扩展物理层（气溶胶/相态）打通
+// 主模型 worstVisibility 与扩展物理层（气溶胶/相态）联动
 const snapBefore8 = Amod.serialize();
 Amod.LAYER_ORDER.forEach(k => { Amod.STATE.layers[k].on = false; });
 Amod.STATE.aerosol.on = true; Amod.STATE.aerosol.beta0 = 5e-4; Amod.STATE.aerosol.scaleH = 1.5;
@@ -803,7 +803,7 @@ const wvAero = Amod.worstVisibility(Amod.effectiveLayers(), { x: 5, dir: 270 }, 
 ok(isFinite(wvAero.vis) && wvAero.vis < 15000, '无云开启气溶胶霾时，主界面 worstVisibility 正确反映气溶胶低能见度（不再恒为 ∞）', wvAero.vis.toFixed(0) + ' m');
 Amod.deserialize(snapBefore8);
 
-// 谱矩正向 LWC 与 effRadiusFromLWC(lwc, N, veff) 严格互逆，且对数正态谱 r_e 接入 operativeRe
+// 谱矩正向 LWC 与 effRadiusFromLWC(lwc, N, veff) 互逆，且对数正态谱 r_e 接入 operativeRe
 const fwdMom = win.Spectrum.lwcFromMoments(300, 9.5, 0.18);
 const invRe = Amod.effRadiusFromLWC(fwdMom.gm3, 300, 0.18);
 ok(Math.abs(invRe - 9.5) < 1e-6, 'Spectrum.lwcFromMoments 与 Atmosphere.effRadiusFromLWC(lwc, N, veff) 严格互逆', invRe.toFixed(4) + ' µm');
@@ -833,7 +833,7 @@ win.TimeSeries.applyDefault();
 win.TimeSeries.visibilityCurve(8);
 ok(Math.abs(Amod.STATE.surfaceTemp - tempBeforeTS) < 1e-6, 'TimeSeries.visibilityCurve 计算后无损还原调用前的场景温度与状态');
 
-// 9) 第三轮科学可靠性与工具性闭环验证（同质冻结硬约束、Lidar 双程衰减、自定义探空同化、预设重置播云、多网格 worstVisibilityDetailed）
+// 9) 同质冻结约束、Lidar 双程衰减、自定义探空同化、预设状态清理与网格扫描校验
 const snapBefore9 = Amod.serialize();
 Amod.STATE.surfaceTemp = 15; Amod.STATE.lapseRate = 6.5; Amod.STATE.micro.autoPhaseTemp = false;
 Amod.STATE.phases = { water: 1, ice: 0, snow: 0, graupel: 0, hail: 0 };
@@ -863,6 +863,57 @@ ok(Amod.STATE.seeding.on === false, '切换至其他场景预设 (fog) 时自动
 const wvd = win.Physics.worstVisibilityDetailed(0);
 ok(wvd && isFinite(wvd.vis) && typeof wvd.x === 'number' && typeof wvd.y === 'number',
   'Physics.worstVisibilityDetailed 采用水平代表网格扫描并返回最差点坐标 (x, y)');
+
+// 10) 水-冰饱和水汽压差 (Murphy & Koop)、CCN 活化耦合、LWP/IWP/CRE_SW、廓线/方案 CSV 导出及扩展敏感性指标校验
+const wbfWarm = Amod.wbfVaporDiff(2.0);
+const wbfOpt = Amod.wbfVaporDiff(-12.5);
+const wbfCold = Amod.wbfVaporDiff(-30.0);
+ok(wbfWarm.diffHpa === 0 && wbfOpt.diffHpa > 0.24 && wbfOpt.diffHpa < 0.30 && wbfOpt.diffHpa > wbfCold.diffHpa,
+  'wbfVaporDiff：水-冰饱和水汽压差 Δe_wi 在 -12.5°C 达峰值 (~0.268 hPa)，>0°C 恒为 0',
+  `0°C+: ${wbfWarm.diffHpa}, -12.5°C: ${wbfOpt.diffHpa.toFixed(4)} hPa (S_i=${wbfOpt.siPct.toFixed(1)}%), -30°C: ${wbfCold.diffHpa.toFixed(4)} hPa`);
+
+Amod.STATE.micro.ccnCoupled = true;
+Amod.STATE.aerosol.on = true;
+Amod.STATE.aerosol.beta0 = 5e-5; Amod.STATE.convection = 20;
+const ncClean = Amod.operativeDropConc();
+Amod.STATE.aerosol.beta0 = 8e-4; Amod.STATE.convection = 80;
+const ncPolluted = Amod.operativeDropConc();
+ok(ncPolluted > ncClean * 2.5,
+  'CCN 活化耦合 (ccnCoupled)：气溶胶消光 β_aer 与对流上升气流增强时活化云滴数浓度 N_c 显著跃升',
+  `${ncClean.toFixed(0)} → ${ncPolluted.toFixed(0)} cm⁻³`);
+Amod.STATE.micro.ccnCoupled = false;
+
+Amod.STATE.layers.sc.on = true; Amod.STATE.layers.sc.coverage = 0.85; Amod.STATE.layers.sc.density = 0.8;
+const opsFull = win.Operators.compute(0, { all: true });
+ok(opsFull.lwp > 10 && opsFull.twp >= opsFull.lwp && opsFull.creSW < -5 && isFinite(opsFull.twomeyForcing),
+  'Operators.compute 返回有效液水路径 LWP、总水路径 TWP、短波云辐射效应 CRE_SW 与 Twomey 强迫',
+  `LWP=${opsFull.lwp.toFixed(1)} g/m², CRE_SW=${opsFull.creSW.toFixed(1)} W/m², dF_Tw=${opsFull.twomeyForcing.toFixed(1)} W/m²`);
+
+const profCsv = win.Exporter.toProfileCSV(0);
+const profLines = profCsv.trim().split('\n');
+ok(profLines.length === 58 && /^z_km,p_hPa,T_degC/.test(profLines[0]),
+  'Exporter.toProfileCSV 导出表头 + 57 层 (0..14 km, Δz=0.25 km) 完整垂直廓线 CSV',
+  `行数=${profLines.length}`);
+const schCsv = win.Exporter.toSchemeCSV({ nPts: 8 });
+const schLines = schCsv.trim().split('\n');
+ok(schLines.length === 9 && /^N_cm3,R_kessler_mmh/.test(schLines[0]),
+  'Exporter.toSchemeCSV 导出三方案雨强与自动转化率随 N_c 变化 CSV',
+  `行数=${schLines.length}`);
+
+const sgRain = win.Physics.sensitivityGrid(
+  { path: 'micro.dropConc', min: 80, max: 800 },
+  { path: 'layers.sc.coverage', min: 0.2, max: 0.95 },
+  { N: 6, metric: 'rainRate' }
+);
+const sgAlb = win.Physics.sensitivityGrid(
+  { path: 'micro.dropConc', min: 80, max: 800 },
+  { path: 'layers.sc.coverage', min: 0.2, max: 0.95 },
+  { N: 6, metric: 'albedo' }
+);
+ok(sgRain.hi > sgRain.lo && sgAlb.hi > sgAlb.lo && sgAlb.hi <= 1.0,
+  'sensitivityGrid 支持降水率 (rainRate) 与云反照率 (albedo) 敏感性扫描',
+  `R=[${sgRain.lo.toFixed(2)}, ${sgRain.hi.toFixed(2)}] mm/h, Alb=[${sgAlb.lo.toFixed(3)}, ${sgAlb.hi.toFixed(3)}]`);
+
 Amod.deserialize(snapBefore9);
 
 // ================= 汇总 =================

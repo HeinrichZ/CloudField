@@ -66,11 +66,13 @@ function main() {
     A.STATE.seeding.inpConc = o.seedInp;
   }
   const Exporter = sandbox.window.Exporter;
-  if (o.format === 'nml' || o.format === 'yaml' || o.format === 'metar' || o.format === 'iwxxm') {
+  if (o.format === 'nml' || o.format === 'yaml' || o.format === 'metar' || o.format === 'iwxxm' || o.format === 'profile-csv' || o.format === 'scheme-csv') {
     const text = o.format === 'nml' ? Exporter.toICONNamelist()
       : o.format === 'yaml' ? Exporter.toExperimentYAML()
       : o.format === 'metar' ? Exporter.toMETAR()
-      : Exporter.toIWXXM();
+      : o.format === 'iwxxm' ? Exporter.toIWXXM()
+      : o.format === 'profile-csv' ? Exporter.toProfileCSV(0)
+      : Exporter.toSchemeCSV();
     if (o.out) {
       fs.writeFileSync(o.out, text);
       console.log('已写出 ' + o.format.toUpperCase() + ' -> ' + o.out);
