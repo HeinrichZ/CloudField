@@ -17,7 +17,9 @@
     const snap = A.serialize().state;
     const w = P.worstVisibilityDetailed(0);
     const cover = A.totalCloudCover();
-    const ops = O.compute(0);
+    const ops = O.compute(0, { all: true });
+    const sdDiag = P.seedingDiagnostics ? P.seedingDiagnostics(0) : null;
+    const cmp = (global.Kessler && global.Kessler.compareSchemes) ? global.Kessler.compareSchemes() : null;
     const img = snapshotDataURL();
     const micro = A.microMapping();
     const params = micro.params.map(p => `<tr><td>${p.label}</td><td>${p.value} ${p.unit}</td><td>${p.mapsTo}</td></tr>`).join('');
@@ -28,15 +30,17 @@ h1{font-size:20px}.kv{display:flex;gap:8px;flex-wrap:wrap}.kv div{background:#f3
 table{border-collapse:collapse;margin:8px 0}td,th{border:1px solid #ddd;padding:4px 8px;font-size:13px}
 img{max-width:100%;border:1px solid #ccc;border-radius:6px}</style></head><body>
 <h1>CloudField 体积云微物理诊断报告</h1>
-<p>生成时间：${new Date().toLocaleString()}</p>
+<p>生成时间：${new Date().toLocaleString()} · 当前参数化方案：<b>${micro.scheme}</b></p>
 <h3>关键读数</h3>
 <div class="kv">
 <div>最坏能见度：${isFinite(w.vis) ? (w.vis >= 1000 ? (w.vis / 1000).toFixed(2) + ' km' : w.vis.toFixed(0) + ' m') : '∞'} @ ${w.alt.toFixed(1)} km</div>
 <div>总云量：${cover.toFixed(0)} %</div>
 <div>光学厚度：${ops.opticalDepth.toFixed(3)}</div>
 ${ops.albedo != null ? `<div>云反照率：${ops.albedo.toFixed(3)}</div>` : ''}
-${ops.satelliteTb != null ? `<div>卫星亮温：${ops.satelliteTb.toFixed(1)} K</div>` : ''}
+${ops.satelliteTb != null ? `<div>卫星红外亮温：${ops.satelliteTb.toFixed(1)} K</div>` : ''}
 ${ops.radar ? `<div>雷达反射率：${ops.radar.dBZ.toFixed(1)} dBZ</div>` : ''}
+${cmp && cmp.atCurrentN ? `<div>三方案雨强 (Kessler/KK2000/SB06)：${cmp.atCurrentN.kessler.toFixed(2)} / ${cmp.atCurrentN.kk2000.toFixed(2)} / ${cmp.atCurrentN.sb06.toFixed(2)} mm/h</div>` : ''}
+${sdDiag ? `<div>CLOUDLAB 播云沟槽能见度：${Math.round(sdDiag.visAmbientM)} m → ${Math.round(sdDiag.visSeededM)} m (×${sdDiag.gainRatio.toFixed(2)})</div>` : ''}
 </div>
 ${img ? '<h3>三维视口快照</h3><img src="' + img + '" alt="viewport">' : ''}
 <h3>微物理参数映射</h3>

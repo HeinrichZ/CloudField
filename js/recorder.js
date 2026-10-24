@@ -16,12 +16,13 @@
 
   function capture() {
     const scalars = {};
-    const skip = ['layers', 'micro', 'spectrum', 'phases', 'aerosol', 'operators', 'playing'];
-    Object.keys(S).forEach(k => { if (!(k in { layers: 1, micro: 1, spectrum: 1, phases: 1, aerosol: 1, operators: 1 }) && S[k] !== Object(S[k])) scalars[k] = S[k]; });
+    const skip = { layers: 1, micro: 1, seeding: 1, spectrum: 1, phases: 1, aerosol: 1, operators: 1, kessler: 1, playing: 1 };
+    Object.keys(S).forEach(k => { if (!skip[k] && S[k] !== Object(S[k])) scalars[k] = S[k]; });
     return {
       scalars,
       layers: JSON.parse(JSON.stringify(S.layers)),
       micro: JSON.parse(JSON.stringify(S.micro)),
+      seeding: S.seeding ? JSON.parse(JSON.stringify(S.seeding)) : undefined,
       spectrum: JSON.parse(JSON.stringify(S.spectrum)),
       phases: JSON.parse(JSON.stringify(S.phases)),
       aerosol: JSON.parse(JSON.stringify(S.aerosol)),

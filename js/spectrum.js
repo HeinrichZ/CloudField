@@ -31,19 +31,24 @@
     }
     if (sp.type === 'measured' && sp.measured && sp.measured.length) {
       const bins = sp.measured;
-      let N = 0, sumR2 = 0, sumR3 = 0, LWCkg = 0;
+      let N = 0, sumR2 = 0, sumR3 = 0, sumR4 = 0, LWCkg = 0;
       for (let i = 0; i < bins.length; i++) {
         const r = bins[i].r * 1e-6, dN = bins[i].dNdlnr * 1e6; // m⁻³ per lnr
         let dln = bins[i].dln || 0;
-        if (i < bins.length - 1) dln = Math.log(bins[i + 1].r / bins[i].r);
-        else if (i > 0 && !dln) dln = Math.log(bins[i].r / bins[i - 1].r);
-        N += dN * dln;
-        sumR2 += r * r * dN * dln;
-        sumR3 += r * r * r * dN * dln;
-        LWCkg += RHO_W * (4 * Math.PI / 3) * r * r * r * dN * dln;
+        if (i < bins.length - 1) dln = Math.abs(Math.log(Math.max(1e-6, bins[i + 1].r) / Math.max(1e-6, bins[i].r)));
+        else if (i > 0 && !dln) dln = Math.abs(Math.log(Math.max(1e-6, bins[i].r) / Math.max(1e-6, bins[i - 1].r)));
+        const w = dN * dln;
+        N += w;
+        sumR2 += r * r * w;
+        sumR3 += r * r * r * w;
+        sumR4 += r * r * r * r * w;
+        LWCkg += RHO_W * (4 * Math.PI / 3) * r * r * r * w;
       }
       const re = sumR2 > 0 ? (sumR3 / sumR2) * 1e6 : 0;
-      const veff = 0; // 实测谱不直接给出 ν_eff，按等效球处理
+      // 由二、三、四阶谱矩精确计算实测谱有效方差 ν_eff = (M4 · M2) / M3² − 1
+      const veff = (sumR3 > 0 && sumR2 > 0)
+        ? Math.max(0, Math.min(0.5, (sumR4 * sumR2) / (sumR3 * sumR3) - 1))
+        : 0;
       const num = N / 1e6;
       return { type: 'measured', N: num, re, veff, LWCkg, LWCgm3: LWCkg * 1000 };
     }

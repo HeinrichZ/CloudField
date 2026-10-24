@@ -8,6 +8,7 @@
       antialias: false,
       alpha: false,
       premultipliedAlpha: false,
+      preserveDrawingBuffer: true,
       powerPreference: 'high-performance',
     }, opts || {}));
     if (!gl) throw new Error('当前环境不支持 WebGL2');

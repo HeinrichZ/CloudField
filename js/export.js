@@ -96,8 +96,9 @@
     const m = S.micro || {};
     const sd = S.seeding || {};
     const sp = S.spectrum || {};
+    const effVeff = (P && P.currentVeff) ? P.currentVeff() : (sp.veff || 0.10);
     const schemeId = m.scheme === 'sb06' ? 4 : (m.scheme === 'kk2000' ? 3 : 1);
-    const nuShape = Math.max(0, Math.min(4, (1 / Math.max(0.05, sp.veff || 0.10)) - 3));
+    const nuShape = Math.max(0, Math.min(4, (1 / Math.max(0.05, effVeff)) - 3));
     return [
       '! ==========================================================================',
       '! CloudField Pre-processor Namelist for ICON-LES / 2-Moment Microphysics',
@@ -109,7 +110,7 @@
       '  qnc_const          = ' + (m.dropConc * 1e6).toExponential(3) + ',     ! Cloud droplet number conc. N_c [m^-3]',
       '  re_fixed_um        = ' + Number(m.effRadiusUm).toFixed(2) + ',          ! Reference effective radius [um]',
       '  re_mode            = "' + (m.reMode || 'derived') + '",',
-      '  nu_c_shape         = ' + nuShape.toFixed(2) + ',          ! Gamma shape parameter from v_eff=' + Number(sp.veff || 0.1).toFixed(2),
+      '  nu_c_shape         = ' + nuShape.toFixed(2) + ',          ! Gamma shape parameter from v_eff=' + Number(effVeff).toFixed(2),
       '  k_autoconv         = ' + Number(m.autoConvK).toExponential(3) + ',     ! Autoconversion rate coeff k1 [s^-1]',
       '  qc0_threshold      = ' + Number(m.autoConvQc0).toExponential(3) + ',     ! Critical cloud water mixing ratio [kg/kg]',
       '  k_accretion        = ' + Number(m.accretK).toFixed(2) + ',          ! Accretion coeff k2',
@@ -150,7 +151,7 @@
       '  re_mode: ' + (S.micro.reMode || 'derived'),
       '  droplet_conc_cm3: ' + S.micro.dropConc,
       '  effective_radius_um: ' + Number(r.re).toFixed(2),
-      '  spectral_veff: ' + Number((S.spectrum && S.spectrum.veff) || 0.10).toFixed(3),
+      '  spectral_veff: ' + Number((P && P.currentVeff) ? P.currentVeff() : ((S.spectrum && S.spectrum.veff) || 0.10)).toFixed(3),
       '  korolev_temp_phase: ' + (!!S.micro.autoPhaseTemp),
       'scheme_comparison_at_current_N:',
       '  rain_rate_mm_h:',

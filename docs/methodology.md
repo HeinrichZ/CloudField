@@ -34,8 +34,8 @@
 
 ### 1.2 米氏与辐射查表
 
-- **消光**：`js/mie.js` 用 van de Hulst 反常衍射近似 `Q_ext(ρ) = 2 − 4/ρ·sinρ + 4/ρ²·(1−cosρ)`（`ρ = 2x(n−1)`，`x = 2πr/λ`），在 `x∈[10⁻²,10³]` 对数网格上建表并插值；针对多分散 Gamma 粒径谱，`qextPolydisperse(x, veff)` 按有效方差 $\nu_{\text{eff}}$ 做 5 点高斯求积平滑反常衍射振荡，`β = 1.5·LWC/r_e · (Q_ext(x, \nu_{\text{eff}})/2)`。`x→∞` 时 `Q_ext→2`，回到几何光学。
-- **辐射**：`js/radiation.js` 用 Cahalan 保守散射反照率 `R₀ = τ/(τ + 4/(3(1−g)))` 加吸收修正 `exp(−(1−ω)τ/μ)`，在 `(τ, μ)` 网格上预计算 `T/R` 表并双线性插值。极限：`τ→0` 时 `T→1, R→0`；`τ→∞` 时 `T→0`。
+- **消光**：`js/mie.js` 用 van de Hulst 反常衍射近似 `Q_ext(ρ) = 2 − 4/ρ·sinρ + 4/ρ²·(1−cosρ)`（`ρ = 2x(n−1)`，`x = 2πr/λ`），在 `x∈[10⁻²,10³]` 对数网格上建表并插值；针对多分散 Gamma 粒径谱，`qextPolydisperse(x, veff)` 按有效方差 $\nu_{\text{eff}}$ 做 5 点高斯求积平滑反常衍射振荡，`β = 1.5·LWC/r_e · (Q_ext(x, \nu_{\text{eff}})/2)`。`x→∞` 时 `Q_ext→2`，回到几何光学。3D 着色器 `uLwcScale` 同步乘入该多分散 Mie 因子。
+- **辐射**：`js/radiation.js` 用 Cahalan 保守散射反照率 `R₀ = τ/(τ + 4/(3(1−g)))` 加反射光子云顶趋肤深度饱和修正 $\tau_{\text{refl}} = \frac{\tau}{1 + \tau/45}$，确保 $\tau \to \infty$ 时厚云球面反照率收敛于物理渐近极限 $R_\infty > 0.80$ 而非归零；`Operators.irradiance()` 与 `cloudAlbedo()` 动态传入相态加权的 $\bar{\omega}_{\text{mix}}, \bar{g}_{\text{mix}}$。
 
 ## 二、云微物理参数化映射（多方案对比与 ETH CLOUDLAB 播云）
 
@@ -55,9 +55,9 @@
    - 自动转化率：引入内禀时间尺度比 $\tau = \frac{q_r}{q_c + q_r} \in [10^{-6}, 0.99]$ 的普适加速函数 $\Phi_{au}(\tau) = 600 \cdot \tau^{0.68} (1 - \tau^{0.68})^3$，以及粒子谱有效方差 $\nu_{\text{eff}}$ 决定的 Gamma 形状参数 $\nu = \frac{1}{\nu_{\text{eff}}} - 3$，谱宽越宽自动转化越快。
    - 碰并收集率：`P_gr = k_{cc} · \rho · q_c · q_r · (\frac{\tau}{\tau + 5\times 10^{-4}})^4`。
 
-4. **ETH CLOUDLAB 过冷层云催化播云（Wegener–Bergeron–Findeisen 冰化过程）**
-   - 物理机制：在过冷云层（$T < 0^\circ\text{C}$）点源播撒人工冰核（`AgI` 碘化银成核阈值 $-5^\circ\text{C}$；液态 $\text{CO}_2$ 均质冻结阈值 $-0.5^\circ\text{C}$）。由于冰面饱和水汽压低于过冷水面，冰晶通过 **WBF 水汽竞争过程**快速夺取过冷云滴水汽并沉降（`wbfRate`），在下风向形成高斯平流扩散的**消云沟槽（Seeding Trench）**。
-   - 空间耦合：`Atmosphere.seedingDepletionAt(x, y, z)` 与 WebGL2 体积光线步进着色器 `clouds.js` 同步计算顺风向羽流内的过冷水削减比例，并在 `Physics.seedingDiagnostics()` 中输出背景云与沟槽内的能见度增益倍数及跑道 CAT-I（$\ge 550\text{ m}$）恢复判据。
+4. **ETH CLOUDLAB 过冷层云催化播云（Wegener–Bergeron–Findeisen 两阶段冰化羽流）**
+   - 物理机制：在过冷云层（$T < 0^\circ\text{C}$）点源播撒人工冰核（`AgI` 碘化银成核阈值 $-5^\circ\text{C}$；液态 $\text{CO}_2$ 均质冻结阈值 $-0.5^\circ\text{C}$）。由于冰面饱和水汽压低于过冷水面，冰晶通过 **WBF 水汽竞争过程**快速夺取过冷云滴水汽并沉降（`wbfRate`）。
+   - 两阶段空间演变：`Atmosphere.seedingPlumeAt(x, y, z)` 区分近源端（$0\sim 2.5\text{ km}$，过冷水向新生柱状/板状冰晶转化，`iceBoost` 抬升冰相占比与激光雷达退偏色比，保留 $35\%$ 冰晶散射过渡）与中远端（$>2.5\text{ km}$，雪晶聚合沉降形成高能见度消云沟槽），并在 `Physics.seedingDiagnostics()` 中输出背景云与沟槽内的能见度增益倍数及跑道 CAT-I（$\ge 550\text{ m}$）恢复判据。
 
 | 参数 | 当前值 | 对应方案参数 / 物理含义 |
 |---|---|---|

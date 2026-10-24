@@ -726,16 +726,53 @@ const yml = win.Exporter.toExperimentYAML();
 ok(/&microphysics_nml/.test(nml) && /&cloudlab_seeding_nml/.test(nml), 'Exporter.toICONNamelist 生成标准 Fortran Namelist 块');
 ok(/experiment:/.test(yml) && /cloudlab_seeding:/.test(yml), 'Exporter.toExperimentYAML 生成结构化实验配置');
 
-// 5) 实测谱 r_e 传递、IWXXM/BUFR Magnus 露点一致性、探空验证 operativeRe 联动
+// 5) 实测谱 r_e 与四阶矩有效方差 ν_eff 传递、IWXXM/BUFR Magnus 露点一致性
 const svSpec = JSON.parse(JSON.stringify(Amod.STATE.spectrum));
-win.Spectrum.parseMeasured('2, 10\n5, 80\n12, 200\n20, 40');
-Amod.STATE.spectrum.type = 'measured';
+win.Spectrum.importMeasured('2, 10\n5, 80\n12, 200\n20, 40');
+const momMeas = win.Spectrum.moments();
 const reMeas = Amod.operativeRe(0.3);
-ok(Math.abs(reMeas - win.Spectrum.moments().re) < 1e-6, '实测谱模式下 operativeRe() 精确采用积分矩 r_e', reMeas.toFixed(2));
+ok(Math.abs(reMeas - momMeas.re) < 1e-6 && momMeas.veff > 0.01,
+  '实测谱模式下 operativeRe() 与四阶矩有效方差 ν_eff 精确积分生效', `r_e=${reMeas.toFixed(2)}, veff=${momMeas.veff.toFixed(3)}`);
 Amod.STATE.spectrum = svSpec;
 const bufr = win.Exporter.toBUFR();
 const bufrDew = bufr.fields.find(x => x.f === 'dewpoint').v;
 ok(Math.abs(bufrDew - Number(Amod.dewAt(0).toFixed(2))) < 1e-6, 'BUFR 导出露点采用 Magnus 公式与主模型严格一致');
+
+// 6) 科学性与工程可靠性加固验证（双流厚云渐近反照率、WBF 两阶段冰化羽流、红外亮温边界、雷达-方案耦合、泰勒图非退化、Recorder 播云快照）
+const rThick = Rad.reflectance(128, 0.5, 0.999, 0.85);
+ok(rThick > 0.78 && rThick < 1.0, '双流辐射：厚云极限 (τ=128) 反照率收敛于渐近极限 R_∞ > 0.78（不归零）', rThick.toFixed(3));
+
+Amod.STATE.seeding.on = true; Amod.STATE.seeding.x0 = -8; Amod.STATE.seeding.alt = 1.0;
+const pNear = Amod.seedingPlumeAt(-7.2, 0, 1.0); // 下风向 0.8 km（近源端冰晶过渡区）
+const pFar = Amod.seedingPlumeAt(-1.0, 0, 1.0);  // 下风向 7.0 km（远端沉降沟槽）
+ok(pNear.iceBoost > 0.3 && pFar.depletion > pNear.depletion,
+  'WBF 两阶段羽流：近源端冰晶激增过渡、远端沉降消云加深',
+  `iceBoost=${pNear.iceBoost.toFixed(2)}, dep: ${pNear.depletion.toFixed(2)} → ${pFar.depletion.toFixed(2)}`);
+Amod.STATE.seeding = svSeed;
+
+const tbNow = win.Operators.satelliteTb(0);
+const tSfcK = 273.15 + Amod.STATE.surfaceTemp;
+ok(tbNow <= tSfcK + 0.5 && tbNow >= 190, '卫星 10.8 µm 红外亮温严格落在云顶温度与地表温度之间', tbNow.toFixed(1) + ' K');
+
+const svSch = Amod.STATE.micro.scheme, svDropN = Amod.STATE.micro.dropConc;
+Amod.STATE.micro.dropConc = 800;
+Amod.STATE.micro.scheme = 'kessler';
+const zKes = win.Operators.radar(0).ZePrecip;
+Amod.STATE.micro.scheme = 'kk2000';
+const zKK = win.Operators.radar(0).ZePrecip;
+Amod.STATE.micro.scheme = svSch; Amod.STATE.micro.dropConc = svDropN;
+ok(zKes > zKK * 1.5, '气象雷达反射率 Z_precip 与所选微物理方案降水率实时联动', `Ze(Kessler)=${zKes.toFixed(1)} vs Ze(KK2000)=${zKK.toFixed(1)}`);
+
+const valSonde = win.Validation.fromRadiosonde();
+const tay = win.Validation.taylor(valSonde.visPairs);
+ok(tay && tay.stdObs > 100 && Math.abs(tay.corr) > 0.01 && tay.stdRatio > 0.05,
+  '探空验证：Gultepe 湿层参考能见度廓线非退化（stdObs>0, R≠0, 泰勒图有效）',
+  `stdRatio=${tay.stdRatio.toFixed(2)}, R=${tay.corr.toFixed(2)}`);
+
+const recCap = win.Recorder.capture();
+ok(recCap && recCap.seeding && typeof recCap.seeding.inpConc === 'number', 'Recorder.capture 完整包含 seeding 播云状态');
+const repHtml = win.Report.generateHTML();
+ok(/CLOUDLAB/.test(repHtml) && /三方案雨强/.test(repHtml), 'Report.generateHTML 包含三方案雨强对比与 CLOUDLAB 播云诊断');
 
 // ================= 汇总 =================
 console.log('\n========================================');

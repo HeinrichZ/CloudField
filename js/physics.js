@@ -8,23 +8,50 @@
   const A = global.Atmosphere;
   const S = A.STATE;
 
-  // —— 相态质量消光效率（相对液态水，单位 m²/kg 的归一因子）与单次散射反照率 ——
+  // —— 相态质量消光效率（相对液态水，单位 m²/kg 的归一因子）、单次散射反照率与非球形不对称因子 g ——
   const PHASE_EXT = { water: 1.00, ice: 0.80, snow: 0.50, graupel: 0.40, hail: 0.30 };
-  const PHASE_OMEGA = { water: 0.96, ice: 0.85, snow: 0.90, graupel: 0.70, hail: 0.62 };
+  const PHASE_OMEGA = { water: 0.999, ice: 0.9995, snow: 0.998, graupel: 0.992, hail: 0.985 };
+  const PHASE_G = { water: 0.85, ice: 0.76, snow: 0.78, graupel: 0.72, hail: 0.70 };
   const PHASE_ORDER = ['water', 'ice', 'snow', 'graupel', 'hail'];
 
-  // 相态质量分数：支持 Korolev (0 ~ -38°C) 温度自适应混合相分配，并打通 micro.iceFrac 与 phases
-  function phaseFractions(z) {
+  // Wyser (1998) / Fu (1996) 冰晶非球形习惯（Habit：六棱柱/板状/枝状晶）随温度的有效粒径放大修正：
+  // 液态水保持 1.0；冰相粒子因广义有效直径 D_ge 显著大于云滴（25~80 µm），单位质量几何截面随温度修正
+  function iceHabitExtFactor(k, T) {
+    if (k === 'water') return 1.0;
+    if (k === 'ice') {
+      // -5°C 暖冰区枝状/柱状晶较大（折减 ~0.68），-45°C 高空冷卷云细小棱柱晶（接近 1.0）
+      const tNorm = Math.max(0, Math.min(1, (-T) / 45));
+      return 0.68 + 0.32 * tNorm;
+    }
+    return 1.0;
+  }
+
+  // 相态质量分数：支持 Korolev (0 ~ -38°C) 温度自适应混合相分配、WBF 播云羽流冰晶化增幅，并打通 micro.iceFrac 与 phases
+  function phaseFractions(z, x, y) {
+    let base;
     if (S.micro && S.micro.autoPhaseTemp && z != null && A.iceFractionAt) {
       const fi = A.iceFractionAt(z);
-      return { water: 1 - fi, ice: fi * 0.75, snow: fi * 0.25, graupel: 0, hail: 0 };
+      base = { water: 1 - fi, ice: fi * 0.75, snow: fi * 0.25, graupel: 0, hail: 0 };
+    } else {
+      const p = S.phases || { water: 1, ice: 0, snow: 0, graupel: 0, hail: 0 };
+      let sum = PHASE_ORDER.reduce((s, k) => s + Math.max(0, p[k] || 0), 0);
+      if (sum <= 0) base = { water: 1, ice: 0, snow: 0, graupel: 0, hail: 0 };
+      else {
+        base = {};
+        PHASE_ORDER.forEach(k => { base[k] = Math.max(0, p[k] || 0) / sum; });
+      }
     }
-    const p = S.phases || { water: 1, ice: 0, snow: 0, graupel: 0, hail: 0 };
-    let sum = PHASE_ORDER.reduce((s, k) => s + Math.max(0, p[k] || 0), 0);
-    if (sum <= 0) return { water: 1, ice: 0, snow: 0, graupel: 0, hail: 0 };
-    const o = {};
-    PHASE_ORDER.forEach(k => { o[k] = Math.max(0, p[k] || 0) / sum; });
-    return o;
+    // 叠加 ETH CLOUDLAB 人工播云羽流内部的 WBF 冰晶转化（近源端残余水凝物以新生冰晶/雪晶为主）
+    if (x != null && y != null && z != null && A.seedingIceBoostAt) {
+      const ib = A.seedingIceBoostAt(x, y, z);
+      if (ib > 0 && base.water > 0) {
+        const shift = base.water * ib * 0.85;
+        base.water -= shift;
+        base.ice = (base.ice || 0) + shift * 0.65;
+        base.snow = (base.snow || 0) + shift * 0.35;
+      }
+    }
+    return base;
   }
 
   function aerosolBetaAt(z) {
@@ -42,28 +69,36 @@
     return (S.spectrum && isFinite(S.spectrum.veff)) ? S.spectrum.veff : 0.10;
   }
 
-  // 详细消光：在 (x,y,z) 处分解各相态、粒子谱宽与气溶胶贡献
+  // 详细消光：在 (x,y,z) 处分解各相态、非球形冰晶习惯、粒子谱宽与气溶胶贡献
   function detailedAt(x, y, z, layers, wind, time) {
     const f = A.sampleFields(x, y, z, layers, wind, time);
     const lwcGm3 = f.lwc;                                   // g/m³（已包含播云 WBF 消散沟削减）
-    const frac = phaseFractions(z);
+    const frac = phaseFractions(z, x, y);
     const reUm = A.operativeRe(lwcGm3);                     // operative 有效半径
     const veff = currentVeff();
-    let betaExt = 0, betaSca = 0;
+    let betaExt = 0, betaSca = 0, gWeighted = 0;
     for (const k of PHASE_ORDER) {
       const lwcK = lwcGm3 * frac[k];
       if (lwcK <= 0) continue;
       const betaGeo = 1.5 * lwcK / Math.max(0.5, reUm);
-      const betaK = PHASE_EXT[k] * (global.Mie ? global.Mie.betaFromLWC_Mie(lwcK, reUm, null, veff) : betaGeo); // m⁻¹
+      const habitFac = iceHabitExtFactor(k, f.temp);
+      const betaK = PHASE_EXT[k] * habitFac * (global.Mie ? global.Mie.betaFromLWC_Mie(lwcK, reUm, null, veff) : betaGeo); // m⁻¹
+      const scaK = PHASE_OMEGA[k] * betaK;
       betaExt += betaK;
-      betaSca += PHASE_OMEGA[k] * betaK;
+      betaSca += scaK;
+      gWeighted += scaK * PHASE_G[k];
     }
     const betaA = aerosolBetaAt(z);
+    const scaA = (S.aerosol && S.aerosol.omega ? S.aerosol.omega : 0.92) * betaA;
     betaExt += betaA;
-    betaSca += (S.aerosol && S.aerosol.omega ? S.aerosol.omega : 0.92) * betaA;
+    betaSca += scaA;
+    gWeighted += scaA * 0.68;
     const betaAbs = Math.max(0, betaExt - betaSca);
+    const omegaMix = betaExt > 0 ? betaSca / betaExt : 0.999;
+    const gMix = betaSca > 0 ? gWeighted / betaSca : 0.85;
     return {
       betaExt, betaSca, betaAbs, betaAero: betaA,
+      omegaMix, gMix,
       lwc: lwcGm3, reUm, veff, frac,
       seedDepletion: f.seedDepletion || 0,
       density: f.density, temp: f.temp, dew: f.dew, pressure: f.pressure,

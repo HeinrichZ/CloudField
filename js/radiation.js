@@ -12,16 +12,23 @@
   const TAU_MAX = 128, NT = 129;   // τ 网格（线性）
   const NM = 24;                   // μ 网格：0.05..1
 
-  // 解析模型（也用于表外/对照）
+  // 解析模型（基于 Coakley & Chýlek 1975 渐近双流近似与光子趋肤深度饱和）：
+  // - 保守散射基态：R0 = τ / (τ + 4/(3(1−g)))，T0 = 1 − R0；
+  // - 反射光子仅穿透云顶有限趋肤深度 τ_skin ≈ 45（τ→∞ 时有效吸收光程饱和于 τ_skin，保证厚云反照率收敛于 R_∞ > 0.80 而非归零）；
+  // - 透射光子穿过整层云厚 τ，按 exp(−(1−ω)·τ/μ) 衰减。
   function model(tau, mu, g, omega) {
     const t = Math.max(0, tau);
     const m = Math.max(0.02, Math.min(1, mu));
-    const gg = g == null ? G_DEF : g;
-    const om = omega == null ? OMEGA_DEF : omega;
+    const gg = g == null ? G_DEF : Math.max(0, Math.min(0.95, g));
+    const om = omega == null ? OMEGA_DEF : Math.max(0.1, Math.min(1, omega));
     const r0 = t / (t + 4 / (3 * (1 - gg)));
-    const abs = Math.exp(-Math.max(0, 1 - om) * t / m);
-    const R = r0 * abs;
-    const T = (1 - r0) * abs;
+    const coAlbedo = Math.max(0, 1 - om);
+    const tauSkin = 45.0;
+    const tauRefl = t / (1 + t / tauSkin);
+    const absR = Math.exp(-coAlbedo * tauRefl / m);
+    const absT = Math.exp(-coAlbedo * t / m);
+    const R = r0 * absR;
+    const T = (1 - r0) * absT;
     return [T, R];
   }
 

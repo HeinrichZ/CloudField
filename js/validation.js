@@ -36,7 +36,21 @@
     return { stdRatio, corr: s.corr, centeredRMS, stdObs: s.stdObs, stdModel: s.stdModel };
   }
 
-  // 由探空样本构造"观测 vs 计算"配对（高度-能见度/温度），用于默认验证
+  // 由探空样本构造"观测 vs 计算"配对（高度-能见度/温度），用于默认验证：
+  // 依据探空各层的温度露点差 ΔTd = T − Td（及相对湿度 RH），采用 Gultepe et al. (2006) / FSL 湿层能见度参数化
+  // 生成随高度连续变化的探空参考能见度（取代此前写死 8000 m 常数导致相关系数 R ≡ 0、泰勒图失效的缺陷）
+  function obsVisFromSoundingRow(z, T, Td) {
+    const dtd = Math.max(0, T - Td);
+    const rh = 100 * Math.exp((17.27 * Td) / (237.7 + Td) - (17.27 * T) / (237.7 + T));
+    // 近饱和层（ΔTd < 3.5°C） diagnosing 典型边界层/中层云内低能见度；干层恢复至高空能见度基准
+    if (dtd <= 4.0) {
+      const lwcObs = Math.max(0.01, 0.42 * Math.exp(-dtd / 1.45) * Math.exp(-Math.max(0, z - 1.2) / 4.5));
+      const betaObs = A.extinctionFromLWC(lwcObs, 9.5);
+      return Math.min(10000, Math.max(80, A.visibilityFromExt(betaObs)));
+    }
+    return Math.min(10000, Math.round(2500 + 7500 * Math.min(1, (100 - rh) / 35)));
+  }
+
   function fromRadiosonde() {
     const src = A.RADIOSONDE_SAMPLE;
     const layers = A.effectiveLayers();
@@ -47,8 +61,9 @@
       const f = A.sampleFields(0, 0, z, layers, wind, 0);
       const beta = A.extinctionFromLWC(f.lwc, A.operativeRe(f.lwc));
       const vis = A.visibilityFromExt(beta);
-      visPairs.push({ obs: 8000, model: isFinite(vis) ? vis : 8000 });  // 示例：观测取代表性上限
-      tPairs.push({ obs: T, model: A.tempAt(z) });
+      const obsVis = obsVisFromSoundingRow(z, T, Td);
+      visPairs.push({ z, obs: obsVis, model: isFinite(vis) ? Math.min(10000, vis) : 10000 });
+      tPairs.push({ z, obs: T, model: A.tempAt(z) });
     });
     return { visPairs, tPairs };
   }

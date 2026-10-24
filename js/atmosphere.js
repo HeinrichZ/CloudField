@@ -183,36 +183,46 @@
     return Math.min(1, Math.max(0, (STATE.micro && STATE.micro.iceFrac) || 0));
   }
 
-  // ETH CLOUDLAB 人工播云下风向消散羽流（Wegener–Bergeron–Findeisen 冰化减消光因子）
-  // 返回 [0, 1] 的液态水消光削减比例（0 = 无播云影响，>0 = 羽流内过冷水转冰并沉降）
-  function seedingDepletionAt(x, y, z) {
+  // ETH CLOUDLAB 人工播云下风向两阶段羽流（Wegener–Bergeron–Findeisen 冰化过渡区 + 沉降消云沟槽）
+  // 阶段 1（近源端 0~2.5 km）：过冷水向新生冰晶快速转化（冰晶有效粒径更大、消光初步降低，且冰相占比跃升）；
+  // 阶段 2（中远端 >2.5 km）：冰晶聚合成雪晶沉降出云层，形成高能见度消云沟槽（Seeding Trench）。
+  function seedingPlumeAt(x, y, z) {
     const sd = STATE.seeding;
-    if (!sd || !sd.on) return 0;
-    // 垂直厚度窗口：播撒层上下 ±0.9 km
+    if (!sd || !sd.on) return { depletion: 0, iceBoost: 0 };
     const dz = Math.abs(z - (sd.alt != null ? sd.alt : 1.1));
-    if (dz > 0.95) return 0;
+    if (dz > 0.95) return { depletion: 0, iceBoost: 0 };
     const vWeight = Math.exp(-Math.pow(dz / 0.55, 2));
 
-    // 温度活化窗口：AgI 需 ≤ -4°C（若环境偏暖则给保底教学演示权重 0.65，低温下 1.0）；液态 CO2 需 ≤ -0.5°C
     const T = tempAt(z);
     const thresh = sd.agent === 'co2' ? -0.5 : -4.0;
     const tFactor = T <= thresh ? 1.0 : (T <= 2.0 ? 0.80 : 0.60);
 
-    // 顺风向（来向 windDir + 180° = 去向）计算羽流轴线投影
     const goRad = ((STATE.windDir || 270) + 180) * Math.PI / 180;
     const ux = Math.sin(goRad), uy = Math.cos(goRad);
     const dx = x - (sd.x0 != null ? sd.x0 : -8.0);
     const dy = y - (sd.z0 != null ? sd.z0 : 0.0);
     const along = dx * ux + dy * uy;          // 下风向距离 km
     const cross = -dx * uy + dy * ux;         // 横风向偏距 km
-    if (along < -1.0 || along > 32.0) return 0;
+    if (along < -1.0 || along > 32.0) return { depletion: 0, iceBoost: 0 };
 
     const alongRamp = along < 0 ? Math.exp(-along * along * 2.5) : 1.0;
+    // 近源端冰晶刚成核尚未完全沉降（保留 35% 冰晶散射过渡），下风向随距离指数沉降清空至 100% 沟槽效率
+    const falloutRamp = along <= 0 ? 0.35 : (0.35 + 0.65 * (1 - Math.exp(-along / 1.8)));
     const halfW = Math.max(0.4, (sd.width || 2.2) + (sd.diffK || 0.30) * Math.sqrt(Math.max(0, along)));
     const crossWeight = Math.exp(-Math.pow(cross / halfW, 2));
     const inpSat = 1 - Math.exp(-Math.max(0, sd.inpConc || 80) / 35);
     const eff = Math.min(0.95, Math.max(0, sd.glaciationEff != null ? sd.glaciationEff : 0.85));
-    return Math.min(0.95, eff * inpSat * tFactor * vWeight * alongRamp * crossWeight);
+    const core = inpSat * tFactor * vWeight * alongRamp * crossWeight;
+    const depletion = Math.min(0.95, eff * core * falloutRamp);
+    // 羽流内部残余水凝物的冰晶化增幅（近源端最强，贯穿整个播云羽流）
+    const iceBoost = Math.min(1.0, core * (0.65 + 0.35 * Math.exp(-Math.max(0, along) / 6.0)));
+    return { depletion, iceBoost };
+  }
+  function seedingDepletionAt(x, y, z) {
+    return seedingPlumeAt(x, y, z).depletion;
+  }
+  function seedingIceBoostAt(x, y, z) {
+    return seedingPlumeAt(x, y, z).iceBoost;
   }
 
   // ============ 云层有效范围（随对流/生消变化）============
@@ -457,7 +467,7 @@
     APP_NAME, SNAPSHOT_VERSION, CLOUD_META, LAYER_ORDER, STATE, SCHEME_LABELS,
     LWC_MAX, KOSCHMEIER_EPS, RHO_W, MAX_ALT, WIND_SCALE,
     lclHeight, tempAt, dewAt, dewpointFromRH, pressureAt, airDensityAt, freezingLevel,
-    iceFractionAt, seedingDepletionAt,
+    iceFractionAt, seedingPlumeAt, seedingDepletionAt, seedingIceBoostAt,
     effectiveLayers, sampleFields,
     extinctionFromLWC, visibilityFromExt, visibilityAtAltitude, worstVisibility,
     lwcFromDensity, betaFromLWC, effRadiusFromLWC, operativeRe, totalCloudCover,

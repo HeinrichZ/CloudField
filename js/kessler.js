@@ -36,7 +36,8 @@
     const qc0 = opts.qc0 != null ? opts.qc0 : S.micro.autoConvQc0;
     const k2 = opts.k2 != null ? opts.k2 : S.micro.accretK;
     const N_cm3 = Math.max(10, opts.N != null ? opts.N : (S.micro.dropConc || 300));
-    const veff = Math.max(0.02, Math.min(0.45, opts.veff != null ? opts.veff : ((S.spectrum && S.spectrum.veff) || 0.10)));
+    const defaultVeff = (global.Physics && global.Physics.currentVeff) ? global.Physics.currentVeff() : ((S.spectrum && S.spectrum.veff) || 0.10);
+    const veff = Math.max(0.02, Math.min(0.45, opts.veff != null ? opts.veff : defaultVeff));
     const rho = Math.max(0.3, opts.rho || 1.0);
     const qcPos = Math.max(0, qc), qrPos = Math.max(0, qr);
 

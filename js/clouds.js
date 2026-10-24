@@ -126,10 +126,11 @@
         float cross = -dp.x * uSeedDir.y + dp.y * uSeedDir.x;
         if(along > -1.0 && along < 32.0){
           float aRamp = (along < 0.0) ? exp(-along * along * 2.5) : 1.0;
+          float fRamp = (along <= 0.0) ? 0.35 : (0.35 + 0.65 * (1.0 - exp(-along / 1.8)));
           float hw = max(0.4, uSeedParams.x + uSeedParams.y * sqrt(max(0.0, along)));
           float cW = exp(-(cross * cross) / (hw * hw));
           float vW = exp(-(dz * dz) / (0.55 * 0.55));
-          float dep = clamp(uSeedParams.z * aRamp * cW * vW, 0.0, 0.95);
+          float dep = clamp(uSeedParams.z * aRamp * fRamp * cW * vW, 0.0, 0.95);
           d *= (1.0 - dep);
         }
       }
@@ -720,7 +721,12 @@
     gl.uniform1i(u.uTintField, field === 'off' ? 0 : (field === 'lwc' ? 1 : field === 'beta' ? 2 : 3));
     gl.uniform1f(u.uTintAmt, S.tintAmt == null ? 0.45 : S.tintAmt);
     gl.uniform2f(u.uTintRange, range[0], range[1]);
-    gl.uniform1f(u.uLwcScale, Atmosphere.LWC_MAX * (1 - 0.6 * (Atmosphere.iceFractionAt ? Atmosphere.iceFractionAt(S.sliceAlt) : S.micro.iceFrac)));
+    const effIce = Atmosphere.iceFractionAt ? Atmosphere.iceFractionAt(S.sliceAlt) : S.micro.iceFrac;
+    const veffNow = (global.Physics && global.Physics.currentVeff) ? global.Physics.currentVeff() : ((S.spectrum && S.spectrum.veff) || 0.10);
+    const mieFac = (global.Mie && global.Mie.qextPolydisperse)
+      ? (global.Mie.qextPolydisperse(2 * Math.PI * Math.max(0.5, S.micro.effRadiusUm || 8) / 0.55, veffNow) / 2.0)
+      : 1.0;
+    gl.uniform1f(u.uLwcScale, Atmosphere.LWC_MAX * (1 - 0.6 * effIce) * mieFac);
     gl.uniform1f(u.uMicroRe, S.micro.effRadiusUm);
     gl.uniform1f(u.uMicroN, S.micro.dropConc);
     gl.uniform1f(u.uReMode, S.micro.reMode === 'derived' ? 1 : 0);
