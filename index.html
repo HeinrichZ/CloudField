@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title data-i18n="app.title">CloudField · 云微物理参数化交互式诊断工具 — © Tianyuan.J.Z</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ 顶栏：品牌 / 运行状态 / 单位体系 / 语言 ============ -->
+  <header id="topbar">
+    <div class="tb-left">
+      <span class="tb-logo">☁</span>
+      <span class="tb-name">CloudField</span>
+      <span class="tb-sub" data-i18n="app.subtitle">云微物理参数化交互式诊断工具</span>
+    </div>
+
+    <div class="tb-status">
+      <button id="state-play" class="chip" data-i18n="tb.play">播放/暂停</button>
+      <span class="chip soft" id="state-speed">1.0×</span>
+      <span class="chip soft" id="state-quality">Q 0.80</span>
+      <span class="chip soft" id="state-fps">-- FPS</span>
+    </div>
+
+    <div class="tb-right">
+      <div class="seg" id="unit-seg" title="hPa = mbar">
+        <button data-unit="common" data-i18n="unit.common">常用</button>
+        <button data-unit="si" data-i18n="unit.si">SI</button>
+      </div>
+      <div class="seg" id="lang-seg" title="Deutsch / English / 中文">
+        <button data-lang="de">DE</button>
+        <button data-lang="en">EN</button>
+        <button data-lang="zh">中文</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============ 左侧控制面板（只放参数） ============ -->
+  <aside id="sidebar">
+    <div id="offline-banner" data-i18n="offline.banner">🔒 离线运行：所有计算在本地浏览器完成，不采集、不上传任何数据</div>
+    <div id="controls"><!-- 由 gui.js 动态生成 --></div>
+    <div class="foot" data-i18n="footer.copy">纯前端离线运行 · © Tianyuan.J.Z</div>
+  </aside>
+
+  <!-- ============ 中央 3D 视口 ============ -->
+  <main id="viewport">
+    <canvas id="gl"></canvas>
+
+    <div id="hud">
+      <span id="hud-mode">真实云</span>
+      <span id="hud-alt">相机高度 -- km</span>
+    </div>
+
+    <div id="view-buttons">
+      <button data-view="persp" class="active" data-i18n="view.persp">透视</button>
+      <button data-view="top" data-i18n="view.top">顶视</button>
+      <button data-view="side" data-i18n="view.side">侧视</button>
+      <button data-view="front" data-i18n="view.front">前视</button>
+    </div>
+
+    <div id="slice-axis"><!-- 可拖拽剖面高度轴（sliceaxis.js） --></div>
+    <div id="legend" class="hidden"></div>
+    <div id="loading" data-i18n="loading.init">正在初始化场景…</div>
+  </main>
+
+  <!-- ============ 右侧诊断面板（读数 / 公式 / 色标 分区） ============ -->
+  <aside id="dashboard">
+    <div class="dash-head">
+      <h2 data-i18n="dash.title">能见度诊断仪表盘</h2>
+      <button id="dash-toggle" data-i18n="dash.collapse">收起 ▾</button>
+    </div>
+    <div class="dash-tabs" id="dash-tabs">
+      <button data-tab="read" class="active" data-i18n="tab.read">读数</button>
+      <button data-tab="formula" data-i18n="tab.formula">公式</button>
+      <button data-tab="scale" data-i18n="tab.scale">色标</button>
+    </div>
+    <div id="dash-body">
+      <div class="tab-pane active" data-pane="read">
+        <div id="dash-readout"></div>
+        <canvas id="dash-canvas" width="300" height="150"></canvas>
+        <div id="dash-snapshots" class="snaps"></div>
+      </div>
+      <div class="tab-pane" data-pane="formula">
+        <div id="dash-formula" class="formula"></div>
+      </div>
+      <div class="tab-pane" data-pane="scale">
+        <div id="dash-scales" class="scales"></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ 底部监控栏（廓线图主导，读数收成仪表卡） ============ -->
+  <footer id="monitor">
+    <section class="mon-panel dominant">
+      <h3><span data-i18n="mon.profile">大气垂直廓线</span>
+        <em class="h-note" data-i18n="mon.profile.note">红=温度 / 蓝=露点 / 绿=饱和区</em></h3>
+      <canvas id="profile" width="640" height="230"></canvas>
+    </section>
+
+    <section class="mon-panel">
+      <h3><span data-i18n="mon.section">水平切片</span> <span id="slice-label">3.0 km</span></h3>
+      <canvas id="section" width="200" height="200"></canvas>
+    </section>
+
+    <section class="mon-panel gauges">
+      <h3 data-i18n="mon.readouts">实时气象读数</h3>
+      <div id="readouts" class="readouts"></div>
+    </section>
+
+    <section class="mon-panel narrow">
+      <h3 data-i18n="mon.status">模拟状态</h3>
+      <div id="sim-status" class="sim-status"></div>
+    </section>
+  </footer>
+
+</div>
+
+<!-- ============ 文档弹窗（可信度说明） ============ -->
+<div id="docs-modal" class="modal hidden"><div class="modal-box">
+  <button class="modal-close" data-close="docs-modal">✕</button>
+  <div id="docs-body" class="modal-body"></div>
+</div></div>
+
+<!-- ============ 探空验证弹窗 ============ -->
+<div id="validate-modal" class="modal hidden"><div class="modal-box">
+  <button class="modal-close" data-close="validate-modal">✕</button>
+  <h2 data-i18n="modal.validate">探空验证（模型 vs 观测）</h2>
+  <div id="validate-body" class="modal-body"></div>
+</div></div>
+
+<!-- ============ 数据接口弹窗（METAR / VIS-RVR-CMV / 机场 / Bridge） ============ -->
+<div id="integration-modal" class="modal hidden"><div class="modal-box wide">
+  <button class="modal-close" data-close="integration-modal">✕</button>
+  <h2 data-i18n="modal.integration">气象数据接口 · 集成</h2>
+  <div id="integration-body" class="modal-body"></div>
+</div></div>
+
+<!-- ============ 高级诊断面板（路线图 #1–#14） ============ -->
+<div id="adv-modal" class="modal hidden"><div class="modal-box wide adv-box">
+  <button class="modal-close" data-close="adv-modal">✕</button>
+  <h2 data-i18n="adv.title">高级诊断面板</h2>
+  <div id="adv-body" class="modal-body"></div>
+</div></div>
+
+<!-- 模块按依赖顺序加载（i18n 必须在最前，其余模块依赖 I18N） -->
+<script src="js/i18n.js"></script>
+<script src="js/units.js"></script>
+<script src="js/colormap.js"></script>
+<script src="js/gl-utils.js"></script>
+<script src="js/camera.js"></script>
+<script src="js/atmosphere.js"></script>
+<script src="js/mie.js"></script>
+<script src="js/radiation.js"></script>
+<!-- 扩展物理与诊断层（依赖顺序：physics 先于 operators/timeseries/recorder/report；operators 先于 export） -->
+<script src="js/physics.js"></script>
+<script src="js/spectrum.js"></script>
+<script src="js/phases.js"></script>
+<script src="js/kessler.js"></script>
+<script src="js/operators.js"></script>
+<script src="js/timeseries.js"></script>
+<script src="js/qc.js"></script>
+<script src="js/export.js"></script>
+<script src="js/validation.js"></script>
+<script src="js/batch.js"></script>
+<script src="js/recorder.js"></script>
+<script src="js/report.js"></script>
+<script src="js/help.js"></script>
+<script src="js/clouds.js"></script>
+<script src="js/sliceaxis.js"></script>
+<script src="js/monitor.js"></script>
+<script src="js/gui.js"></script>
+<script src="js/integration.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

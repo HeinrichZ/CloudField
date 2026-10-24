@@ -1,0 +1,15 @@
+{
+  "name": "cloudfield-bridge-adapter",
+  "version": "1.0.0",
+  "description": "CloudField Bridge Adapter：独立的 IPC 进程（WebSocket + REST），承载 METAR/BUFR/GRIB2 预解码、多节点同步。纯 Node 内置模块，无需 npm install 即可运行。",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "author": "Heinrich.Z & Tianyuan.J.Z <zhangheinrich@foxmail.com>",
+  "license": "SEE LICENSE IN README.md",
+  "dependencies": {}
+}

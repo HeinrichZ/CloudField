@@ -1,0 +1,22 @@
+# ---- 运行时产物 ----
+bridge-adapter/sessions/*.json
+*.log
+*.tmp
+
+# ---- 依赖 ----
+node_modules/
+
+# ---- 调试截图（仅本地排查用，不随仓库分发） ----
+tools/*.png
+
+# ---- 操作系统 / 编辑器 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# ---- 密钥类（任何情况下都不要提交） ----
+CF_KEY*
+*.pem
+*.key
