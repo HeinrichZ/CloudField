@@ -1,8 +1,7 @@
-/* physics.js — CloudField 扩展物理：谱矩、相态分档、气溶胶与"详细消光"
- * 作为 atmosphere.js 的增强层（不改动原文件，保持向后兼容）。
- * 提供：详细消光（散射/吸收分离）、水平能见度场、统计量、参数敏感性、状态补丁。
- * 注：消光/散射采用单分散球滴近似的解析修正；如需更高保真，可在 Spectrum.mieExt()
- *     处接入米氏查找表（如 BHMIE 预计算表）。
+/* physics.js — CloudField 扩展物理：谱矩、相态分档、气溶胶、详细消光与 ETH CLOUDLAB 播云诊断
+ * 作为 atmosphere.js 的增强层（保持向后兼容）。
+ * 提供：详细消光（散射/吸收分离、谱宽耦合、Korolev 温度相态分配）、水平能见度场、
+ *       ETH CLOUDLAB 播云消散沟对比诊断、参数敏感性扫描、状态补丁。
  */
 (function (global) {
   'use strict';
@@ -10,12 +9,16 @@
   const S = A.STATE;
 
   // —— 相态质量消光效率（相对液态水，单位 m²/kg 的归一因子）与单次散射反照率 ——
-  // 因子含义：相同质量下，冰晶/雪/霰/雹因粒径更大、数浓度更低，单位质量消光弱于水滴。
   const PHASE_EXT = { water: 1.00, ice: 0.80, snow: 0.50, graupel: 0.40, hail: 0.30 };
   const PHASE_OMEGA = { water: 0.96, ice: 0.85, snow: 0.90, graupel: 0.70, hail: 0.62 };
   const PHASE_ORDER = ['water', 'ice', 'snow', 'graupel', 'hail'];
 
-  function phaseFractions() {
+  // 相态质量分数：支持 Korolev (0 ~ -38°C) 温度自适应混合相分配，并打通 micro.iceFrac 与 phases
+  function phaseFractions(z) {
+    if (S.micro && S.micro.autoPhaseTemp && z != null && A.iceFractionAt) {
+      const fi = A.iceFractionAt(z);
+      return { water: 1 - fi, ice: fi * 0.75, snow: fi * 0.25, graupel: 0, hail: 0 };
+    }
     const p = S.phases || { water: 1, ice: 0, snow: 0, graupel: 0, hail: 0 };
     let sum = PHASE_ORDER.reduce((s, k) => s + Math.max(0, p[k] || 0), 0);
     if (sum <= 0) return { water: 1, ice: 0, snow: 0, graupel: 0, hail: 0 };
@@ -30,24 +33,28 @@
     return Math.max(0, a.beta0) * Math.exp(-Math.max(0, z) / Math.max(0.1, a.scaleH));
   }
 
-  // 详细消光：在 (x,y,z) 处分解各相态与气溶胶贡献
+  // 当前粒子谱有效方差 ν_eff（来自 Spectrum 模块或 STATE.spectrum）
+  function currentVeff() {
+    if (global.Spectrum && typeof global.Spectrum.moments === 'function') {
+      const m = global.Spectrum.moments();
+      if (m && isFinite(m.veff)) return m.veff;
+    }
+    return (S.spectrum && isFinite(S.spectrum.veff)) ? S.spectrum.veff : 0.10;
+  }
+
+  // 详细消光：在 (x,y,z) 处分解各相态、粒子谱宽与气溶胶贡献
   function detailedAt(x, y, z, layers, wind, time) {
     const f = A.sampleFields(x, y, z, layers, wind, time);
-    const lwcGm3 = f.lwc;                                   // g/m³
-    const frac = phaseFractions();
-    // 与主模型共用同一 r_e 源（A.operativeRe：derived 时由 LWC 与 N 反推，fixed 时用滑块）。
-    // Spectrum.moments() 仅用于谱分析读数，不参与消光计算。
-    const reUm = A.operativeRe(lwcGm3);                       // operative 有效半径
+    const lwcGm3 = f.lwc;                                   // g/m³（已包含播云 WBF 消散沟削减）
+    const frac = phaseFractions(z);
+    const reUm = A.operativeRe(lwcGm3);                     // operative 有效半径
+    const veff = currentVeff();
     let betaExt = 0, betaSca = 0;
     for (const k of PHASE_ORDER) {
       const lwcK = lwcGm3 * frac[k];
       if (lwcK <= 0) continue;
-      // 单位约定：本模块内部 β 一律用 m⁻¹（visibilityFromExt / 光学厚度都按 m⁻¹ 处理）。
-      //   β[m⁻¹] = 3·LWC_kgm3/(2·ρ_w·r_e_m) = 1.5·LWC_gm3/r_e_um
-      //   注意：atmosphere.betaFromLWC() 返回的是 km⁻¹（系数 1500），两者相差 1000，不可混用。
-      // 优先用米氏查表（反常衍射近似，Q_ext/2 修正）；未加载时退回几何光学 1.5·LWC/r_e
       const betaGeo = 1.5 * lwcK / Math.max(0.5, reUm);
-      const betaK = PHASE_EXT[k] * (global.Mie ? global.Mie.betaFromLWC_Mie(lwcK, reUm) : betaGeo); // m⁻¹
+      const betaK = PHASE_EXT[k] * (global.Mie ? global.Mie.betaFromLWC_Mie(lwcK, reUm, null, veff) : betaGeo); // m⁻¹
       betaExt += betaK;
       betaSca += PHASE_OMEGA[k] * betaK;
     }
@@ -57,7 +64,8 @@
     const betaAbs = Math.max(0, betaExt - betaSca);
     return {
       betaExt, betaSca, betaAbs, betaAero: betaA,
-      lwc: lwcGm3, reUm, frac,
+      lwc: lwcGm3, reUm, veff, frac,
+      seedDepletion: f.seedDepletion || 0,
       density: f.density, temp: f.temp, dew: f.dew, pressure: f.pressure,
     };
   }
@@ -65,7 +73,7 @@
   function visibilityDetailed(x, y, z, time) {
     const d = detailedAt(x, y, z, A.effectiveLayers(), { x: S.windSpeed, dir: S.windDir }, time);
     const vis = A.visibilityFromExt(d.betaExt);
-    return { vis, beta: d.betaExt, sca: d.betaSca, abs: d.betaAbs, lwc: d.lwc, re: d.reUm, frac: d.frac };
+    return { vis, beta: d.betaExt, sca: d.betaSca, abs: d.betaAbs, lwc: d.lwc, re: d.reUm, veff: d.veff, frac: d.frac, seedDepletion: d.seedDepletion };
   }
 
   function worstVisibilityDetailed(time) {
@@ -75,6 +83,62 @@
       if (isFinite(v.vis) && v.vis < worst) { worst = v.vis; atZ = z; info = v; }
     }
     return { vis: worst, alt: atZ, info };
+  }
+
+  // ETH CLOUDLAB 人工播云试验诊断：对比播撒羽流轴线内（下风向 3~12 km 代表性云团）与周围未播撒环境云体的能见度及跑道起降标准恢复情况
+  function seedingDiagnostics(time) {
+    const sd = S.seeding || {};
+    let z = sd.alt != null ? sd.alt : 1.1;
+    const goRad = ((S.windDir || 270) + 180) * Math.PI / 180;
+    const ux = Math.sin(goRad), uy = Math.cos(goRad);
+    const x0 = sd.x0 != null ? sd.x0 : -8.0;
+    const y0 = sd.z0 != null ? sd.z0 : 0.0;
+
+    // 临时关闭播云取背景环境能见度，再开启播云取羽流内能见度；沿下风向轴线扫描代表性有云点
+    const prevOn = !!sd.on;
+    const prevAlt = sd.alt;
+    sd.on = false;
+    let xPlume = x0 + ux * 6.0, yPlume = y0 + uy * 6.0;
+    let amb = visibilityDetailed(xPlume, yPlume, z, time || 0);
+    if (!amb.lwc || amb.lwc < 0.02) {
+      const candZ = [z];
+      if (S.layers && S.layers.sc && S.layers.sc.on) candZ.push(0.5 * (S.layers.sc.base + S.layers.sc.top));
+      if (S.layers && S.layers.cu && S.layers.cu.on) candZ.push(0.5 * (S.layers.cu.base + S.layers.cu.top));
+      let bestLwc = amb.lwc || 0;
+      for (const cz of candZ) {
+        for (const dist of [3, 4.5, 6, 7.5, 9, 11]) {
+          const cx = x0 + ux * dist, cy = y0 + uy * dist;
+          const cand = visibilityDetailed(cx, cy, cz, time || 0);
+          if (cand.lwc > bestLwc) {
+            bestLwc = cand.lwc; amb = cand; xPlume = cx; yPlume = cy; z = cz;
+          }
+        }
+      }
+    }
+    sd.on = true;
+    sd.alt = z;
+    const seeded = visibilityDetailed(xPlume, yPlume, z, time || 0);
+    sd.on = prevOn;
+    sd.alt = prevAlt;
+
+    const visAmb = isFinite(amb.vis) ? amb.vis : 99999;
+    const visSeed = isFinite(seeded.vis) ? seeded.vis : 99999;
+    const gainRatio = visAmb > 0 ? visSeed / visAmb : 1;
+    return {
+      active: prevOn,
+      agent: sd.agent || 'agi',
+      inpConc: sd.inpConc || 80,
+      altKm: z,
+      tempC: A.tempAt(z),
+      visAmbientM: visAmb,
+      visSeededM: visSeed,
+      ambientVis: visAmb,
+      seededVis: visSeed,
+      lwcAmbient: amb.lwc,
+      lwcSeeded: seeded.lwc,
+      gainRatio,
+      cat1Recovered: visSeed >= 550,
+    };
   }
 
   // —— 水平能见度场 + 统计量（#2：空间对比与统计）——
@@ -101,17 +165,14 @@
         if (vv < 1000) visUnder1k++;
       }
     }
-    // 云顶/云底高度
     let cloudTop = 0, cloudBase = 99;
     layers.forEach(L => { if (L.coverage > 0.02) { cloudTop = Math.max(cloudTop, L.top); cloudBase = Math.min(cloudBase, L.base); } });
     if (cloudBase > cloudTop) { cloudBase = 0; cloudTop = 0; }
-    // 垂直积分光学厚度（代表列）
     let od = 0;
     for (let zz = 0; zz <= 14; zz += 0.25) {
       const d = detailedAt(0, 0, zz, layers, wind, opts.time || 0);
       od += d.betaExt * 250;
     }
-    // 水平平均消光廓线
     const profN = 60; const prof = new Float32Array(profN);
     for (let zi = 0; zi < profN; zi++) {
       const zz = (zi / (profN - 1)) * 14;
@@ -134,16 +195,8 @@
   }
 
   // —— 参数敏感性热力图（#6）——
-  // 逐点求值：vis = 多点水平采样下的最差能见度；opticalDepth = 单列垂直积分光学厚度。
-  // 这里同时处理三个会让热力图“看起来坏掉”的坑：
-  //   1) 有些参数在当前状态下不参与计算——derived 模式下 micro.effRadiusUm 被 operativeRe()
-  //      忽略，气溶胶开关关闭时 aerosol.* 恒为 0。直接扫描会得到一条常量轴（整列同色）。
-  //      扫描期间临时激活这些参数，结束后原样恢复。
-  //   2) 采样时间不能写死 t=0，否则风场类参数（windSpeed）永远没有效果。由调用方传入当前仿真时间。
-  //   3) 只看 (0,0) 单列时，若该列恰逢晴空，覆盖类参数（layers.*.coverage）会显示为无效。
-  //      改为 3 个水平采样点取最差，既能覆盖云隙也能反映覆盖率变化。
-  const SEN_DZ = 0.75;                            // 垂直采样步长 km（0–14 km → 19 层）
-  const SEN_OFFS = [[0, 0], [7, 7], [-7, -7]];    // 水平采样点（km）
+  const SEN_DZ = 0.75;
+  const SEN_OFFS = [[0, 0], [7, 7], [-7, -7]];
 
   function sensitivityOpen(pa, pb, opts) {
     opts = opts || {};
@@ -153,7 +206,6 @@
     const dz = opts.dz || SEN_DZ;
     const offs = metric === 'opticalDepth' ? [[0, 0]] : (opts.offsets || SEN_OFFS);
 
-    // 临时激活“当前状态下无效”的被扫参数，结束后回滚
     const undo = [];
     function activate(path) {
       if (path === 'micro.effRadiusUm' && S.micro.reMode !== 'fixed') {
@@ -164,6 +216,10 @@
         undo.push({ path: 'aerosol.on', prev: false });
         S.aerosol.on = true;
       }
+      if (path.indexOf('seeding.') === 0 && S.seeding && !S.seeding.on) {
+        undo.push({ path: 'seeding.on', prev: false });
+        S.seeding.on = true;
+      }
     }
     activate(pa.path); activate(pb.path);
 
@@ -173,8 +229,6 @@
     let row = 0;
 
     function value() {
-      // 每点重新取层：layers.*.coverage / density 本身可能就是被扫参数，
-      // 提到循环外会把覆盖率扫描变成一条平带（早期版本的隐患）。
       const layers = A.effectiveLayers();
       if (metric === 'opticalDepth') {
         let od = 0;
@@ -196,7 +250,6 @@
       N, metric, grid, time, pa, pb,
       progress: () => (N > 0 ? row / N : 1),
       finished: () => row >= N,
-      // 分块推进：每帧算若干行，避免一次性 700+ ms 阻塞主线程（界面“点了没反应”）
       stepRows(n) {
         let cnt = Math.max(1, n || 1);
         while (cnt-- > 0 && row < N) {
@@ -210,7 +263,6 @@
         }
         return N > 0 ? row / N : 1;
       },
-      // 值域与逐轴变化幅度：spread≈0 说明该轴上的参数对当前指标没有影响
       summary() {
         let lo = Infinity, hi = -Infinity;
         for (let k = 0; k < grid.length; k++) {
@@ -233,7 +285,7 @@
           let a = Infinity, b = -Infinity;
           for (let k = 0; k < arr.length; k++) { const v = arr[k]; if (isFinite(v)) { if (v < a) a = v; if (v > b) b = v; } }
           if (!isFinite(a)) return 0;
-          return (b - a) / Math.max(1e-9, Math.abs((a + b) / 2));   // 相对变化幅度
+          return (b - a) / Math.max(1e-9, Math.abs((a + b) / 2));
         };
         return { lo, hi, spreadA: span(rowM), spreadB: span(colM), spread: hi > lo ? (hi - lo) / Math.max(1e-9, Math.abs((lo + hi) / 2)) : 0 };
       },
@@ -247,7 +299,6 @@
     return job;
   }
 
-  // 同步封装（CLI / 单元测试用）：一次算完并返回数组
   function sensitivityGrid(pa, pb, opts) {
     const job = sensitivityOpen(pa, pb, opts);
     while (!job.finished()) job.stepRows(job.N);
@@ -278,6 +329,7 @@
     if (patch.scalars) for (const k in patch.scalars) if (S[k] !== undefined) S[k] = patch.scalars[k];
     if (patch.layers) for (const k in patch.layers) Object.assign(S.layers[k], patch.layers[k]);
     if (patch.micro) Object.assign(S.micro, patch.micro);
+    if (patch.seeding && S.seeding) Object.assign(S.seeding, patch.seeding);
     if (patch.spectrum) Object.assign(S.spectrum, patch.spectrum);
     if (patch.phases) Object.assign(S.phases, patch.phases);
     if (patch.aerosol) Object.assign(S.aerosol, patch.aerosol);
@@ -288,8 +340,8 @@
 
   global.Physics = {
     PHASE_EXT, PHASE_OMEGA, PHASE_ORDER,
-    phaseFractions, aerosolBetaAt, detailedAt, visibilityDetailed,
-    worstVisibilityDetailed, fieldStats, sensitivityGrid, sensitivityOpen,
+    phaseFractions, aerosolBetaAt, currentVeff, detailedAt, visibilityDetailed,
+    worstVisibilityDetailed, seedingDiagnostics, fieldStats, sensitivityGrid, sensitivityOpen,
     setPath, getPath, applyStatePatch,
   };
 })(window);

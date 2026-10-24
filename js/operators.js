@@ -1,6 +1,6 @@
 /* operators.js — 多诊断量观测算子（#3）
  * 同一微物理场的不同"观测算子"：散射/吸收分离、太阳/天空辐照度、
- * 云反照率、卫星可见光亮温、激光雷达回波、微波/气象雷达反射率。
+ * 云反照率、卫星可见光亮温、激光雷达回波、微波/气象雷达反射率（含粒子谱宽六阶矩修正）。
  * 均为自包含近似模型；真实传感器需接入光谱响应/散射查找表（标注于注释）。
  */
 (function (global) {
@@ -24,7 +24,6 @@
   function irradiance(time) {
     const cosZ = Math.max(0.05, Math.sin((S.sunElev || 35) * Math.PI / 180));
     const tau = columnOpticalDepth(time);
-    // 优先用双流查表（T 随 τ、μ 变化）；未加载时退回单指数近似
     if (global.Radiation) {
       const T = global.Radiation.transmittance(tau, cosZ, 0.999, 0.85);
       const Td = global.Radiation.direct(tau, cosZ);
@@ -53,15 +52,12 @@
   function satelliteTb(time) {
     const tau = columnOpticalDepth(time);
     if (tau < 0.01) {
-      // 晴空：地表/大气等效亮温 ≈ 地表温度换算
       return 273.15 + S.surfaceTemp - 15;
     }
-    // 云顶高度取有效云层顶
     let top = 0;
     A.effectiveLayers().forEach(L => { if (L.coverage > 0.02) top = Math.max(top, L.top); });
     const Tcloud = A.tempAt(top) + 273.15;
     const A_c = cloudAlbedo(time);
-    // 可见通道亮温随反照率升高而降低（反射更多太阳辐射），经验近似
     return Tcloud - 30 * A_c;
   }
 
@@ -81,7 +77,7 @@
     return { betaBack, colorRatio, tau: betaSca };
   }
 
-  // 气象雷达反射率：液态与水凝物分开近似（dBZ）
+  // 气象雷达反射率：液态与水凝物分开近似（dBZ），并耦合粒子谱有效方差 ν_eff 对六阶矩 M6 的放大效应
   function radar(time) {
     const layers = A.effectiveLayers(), wind = { x: S.windSpeed, dir: S.windDir };
     let lwcLiq = 0, lwcIce = 0;
@@ -92,12 +88,15 @@
       lwcLiq += (lwcGm3 * (f.water || 0)) * 0.25;
       lwcIce += (lwcGm3 * (1 - (f.water || 0))) * 0.25;
     }
-    // 液态：Ze≈6e5·LWC^1.6（近似）；冰相/雪弱约 1/4
-    const ZeLiq = 6e5 * Math.pow(Math.max(lwcLiq, 1e-4), 1.6);
-    const ZeIce = 1.5e5 * Math.pow(Math.max(lwcIce, 1e-4), 1.6);
+    // Gamma 谱六阶矩修正：M6 / M3^2 随有效方差 veff 增大而显著增长
+    const veff = (P.currentVeff ? P.currentVeff() : ((S.spectrum && S.spectrum.veff) || 0.10));
+    const v = Math.max(0, Math.min(0.45, veff));
+    const m6Factor = (1 + v) * (1 + 2 * v) * (1 + 3 * v) / ((1 + 0.1) * (1 + 0.2) * (1 + 0.3));
+    const ZeLiq = 6e5 * Math.pow(Math.max(lwcLiq, 1e-4), 1.6) * m6Factor;
+    const ZeIce = 1.5e5 * Math.pow(Math.max(lwcIce, 1e-4), 1.6) * m6Factor;
     const Ze = ZeLiq + ZeIce;
     const dBZ = 10 * Math.log10(Math.max(1e-3, Ze));
-    return { Ze, dBZ, lwcLiq, lwcIce };
+    return { Ze, dBZ, lwcLiq, lwcIce, m6Factor };
   }
 
   // opts.all = true 时忽略开关，返回全部算子（供批处理/报告需要完整字段时使用）

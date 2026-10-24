@@ -235,13 +235,29 @@
     ], false));
 
     container.appendChild(group(I18N.t('grp.const'), [
+      selCtrl(I18N.t('const.scheme'), [
+        ['kessler', I18N.t('scheme.kessler')],
+        ['kk2000', I18N.t('scheme.kk2000')],
+        ['sb06', I18N.t('scheme.sb06')],
+      ], () => S.micro.scheme || 'kessler', v => { S.micro.scheme = v; if (global.Kessler) global.Kessler.reset(); }, I18N.t('const.scheme.tip')),
       rangeCtrl(I18N.t('const.re'), 2, 25, 0.5, 'µm', () => S.micro.effRadiusUm, v => S.micro.effRadiusUm = v, x => x.toFixed(1), I18N.t('const.re.tip')),
       rangeCtrl(I18N.t('const.N'), 10, 1000, 10, 'cm⁻³', () => S.micro.dropConc, v => S.micro.dropConc = v, x => x.toFixed(0), I18N.t('const.N.tip')),
       toggleCtrl(I18N.t('const.reMode'), () => S.micro.reMode === 'derived', v => S.micro.reMode = v ? 'derived' : 'fixed', I18N.t('const.reMode.tip')),
       rangeCtrl(I18N.t('const.k1'), 0.1, 5, 0.1, '×10⁻³', () => S.micro.autoConvK * 1000, v => S.micro.autoConvK = v / 1000, x => x.toFixed(1), I18N.t('const.k1.tip')),
       rangeCtrl(I18N.t('const.qc0'), 0.1, 2, 0.1, '×10⁻³', () => S.micro.autoConvQc0 * 1000, v => S.micro.autoConvQc0 = v / 1000, x => x.toFixed(1), I18N.t('const.qc0.tip')),
       rangeCtrl(I18N.t('const.k2'), 0.5, 5, 0.1, '', () => S.micro.accretK, v => S.micro.accretK = v, x => x.toFixed(1), I18N.t('const.k2.tip')),
-      rangeCtrl(I18N.t('const.ice'), 0, 1, 0.02, '', () => S.micro.iceFrac, v => S.micro.iceFrac = v, x => x.toFixed(2), I18N.t('const.ice.tip')),
+      rangeCtrl(I18N.t('const.ice'), 0, 1, 0.02, '', () => S.micro.iceFrac, v => {
+        S.micro.iceFrac = v;
+        if (S.phases) { S.phases.ice = v; S.phases.water = Math.max(0, 1 - v); }
+      }, x => x.toFixed(2), I18N.t('const.ice.tip')),
+      toggleCtrl(I18N.t('const.autoPhaseTemp'), () => !!S.micro.autoPhaseTemp, v => S.micro.autoPhaseTemp = v, I18N.t('const.autoPhaseTemp.tip')),
+      toggleCtrl(I18N.t('seed.on'), () => !!(S.seeding && S.seeding.on), v => { if (S.seeding) S.seeding.on = v; }, I18N.t('seed.on.tip')),
+      selCtrl(I18N.t('seed.agent'), [
+        ['agi', I18N.t('seed.agi')],
+        ['co2', I18N.t('seed.co2')],
+      ], () => (S.seeding && S.seeding.agent) || 'agi', v => { if (S.seeding) S.seeding.agent = v; }, I18N.t('seed.agent.tip')),
+      rangeCtrl(I18N.t('seed.inp'), 5, 500, 5, 'L⁻¹', () => (S.seeding && S.seeding.inpConc) || 80, v => { if (S.seeding) S.seeding.inpConc = v; }, x => x.toFixed(0), I18N.t('seed.inp.tip')),
+      rangeCtrl(I18N.t('seed.eff'), 0.1, 0.95, 0.05, '', () => (S.seeding && S.seeding.glaciationEff != null) ? S.seeding.glaciationEff : 0.85, v => { if (S.seeding) S.seeding.glaciationEff = v; }, x => x.toFixed(2), I18N.t('seed.eff.tip')),
       toggleCtrl(I18N.t('kes.on'), () => (S.kessler ? !!S.kessler.on : false), v => { if (global.Kessler) { global.Kessler.ensure(); S.kessler.on = v; } }, I18N.t('kes.on.tip')),
       btn('↺ ' + I18N.t('kes.reset'), () => { if (global.Kessler) global.Kessler.reset(); notifyChange(); }, I18N.t('kes.reset.tip')),
     ], true));
@@ -342,7 +358,7 @@
     const nav = document.createElement('div'); nav.className = 'adv-nav';
     const panes = document.createElement('div'); panes.className = 'adv-panes';
     body.appendChild(nav); body.appendChild(panes);
-    const items = ['timeseries', 'spatial', 'sensitivity', 'qc', 'export', 'validation', 'recorder', 'report', 'help', 'scenarios'];
+    const items = ['cloudlab', 'timeseries', 'spatial', 'sensitivity', 'qc', 'export', 'validation', 'recorder', 'report', 'help', 'scenarios'];
     const paneEls = {};
     items.forEach((it, i) => {
       const b = btn(I18N.t('nav.' + it), () => {
@@ -354,6 +370,7 @@
       const p = document.createElement('div'); p.className = 'adv-pane'; p.style.display = (i === 0 ? '' : 'none');
       paneEls[it] = p; panes.appendChild(p);
     });
+    buildCloudLabPane(paneEls.cloudlab);
     buildTimeSeriesPane(paneEls.timeseries);
     buildSpatialPane(paneEls.spatial);
     buildSensitivityPane(paneEls.sensitivity);
@@ -372,6 +389,51 @@
   }
 
   function card(t, v) { return '<div class="stat-card"><div class="sv">' + v + '</div><div class="sl">' + t + '</div></div>'; }
+
+  // ETH CLOUDLAB 过冷水播云沙盒 & 三方案（Kessler / KK2000 / ICON-SB06）同屏对比页
+  function buildCloudLabPane(root) {
+    root.innerHTML = '<h3>' + I18N.t('cl.title') + '</h3><div class="range-hint">' + I18N.t('cl.desc') + '</div>';
+    const row = document.createElement('div'); row.className = 'btn-row wrap';
+    row.appendChild(btn(I18N.t('cl.compute'), () => refreshCloudLab()));
+    row.appendChild(btn(I18N.t('cl.seedDemo'), () => {
+      S.surfaceTemp = -2;
+      S.surfaceRH = 92;
+      S.windSpeed = 10;
+      S.windDir = 270;
+      S.sliceAlt = 1.1;
+      S.layers.sc.on = true; S.layers.sc.base = 0.4; S.layers.sc.top = 1.8; S.layers.sc.coverage = 0.92; S.layers.sc.density = 0.85;
+      if (S.seeding) { S.seeding.on = true; S.seeding.agent = 'agi'; S.seeding.inpConc = 120; S.seeding.alt = 1.1; S.seeding.glaciationEff = 0.88; }
+      refreshAll();
+      notifyChange();
+      refreshCloudLab();
+    }));
+    root.appendChild(row);
+    const cv = document.createElement('canvas'); cv.id = 'cl-scheme-cv'; cv.width = 420; cv.height = 175; cv.className = 'adv-canvas'; root.appendChild(cv);
+    const schemeStats = document.createElement('div'); schemeStats.id = 'cl-scheme-stats'; schemeStats.className = 'stat-cards'; root.appendChild(schemeStats);
+    const seedStats = document.createElement('div'); seedStats.id = 'cl-seed-stats'; seedStats.className = 'stat-cards'; root.appendChild(seedStats);
+
+    function refreshCloudLab() {
+      if (global.Kessler && global.Kessler.compareSchemes) {
+        const cmp = global.Kessler.compareSchemes();
+        if (global.Monitor && global.Monitor.drawSchemeComparison) global.Monitor.drawSchemeComparison(cv, cmp);
+        const cur = cmp.atCurrentN;
+        schemeStats.innerHTML =
+          card('Kessler (1969)', cur.kessler.toFixed(2) + ' mm/h') +
+          card('KK2000 (2-Mom)', cur.kk2000.toFixed(2) + ' mm/h') +
+          card('ICON-SB06 (2-Mom)', cur.sb06.toFixed(2) + ' mm/h') +
+          card('Δ(KK2000−Kessler)', (cur.diffKK_Kessler >= 0 ? '+' : '') + cur.diffKK_Kessler.toFixed(2) + ' mm/h');
+      }
+      if (global.Physics && global.Physics.seedingDiagnostics) {
+        const sd = global.Physics.seedingDiagnostics(0);
+        seedStats.innerHTML =
+          card(I18N.t('cl.visAmb'), Math.round(sd.visAmbientM) + ' m') +
+          card(I18N.t('cl.visSeed'), Math.round(sd.visSeededM) + ' m') +
+          card(I18N.t('cl.gain'), sd.gainRatio.toFixed(2) + '×') +
+          card('CAT-I (≥550m)', sd.cat1Recovered ? '✓ OK' : '✗');
+      }
+    }
+    setTimeout(refreshCloudLab, 0);
+  }
   function buildTimeSeriesPane(root) {
     root.innerHTML = '<h3>' + I18N.t('ts.title') + '</h3>';
     const ta = document.createElement('textarea'); ta.id = 'ts-text'; ta.rows = 5; ta.placeholder = 't,surfTemp,RH,wind,wdir,conv,ci.cov,ci.den,cs.cov,cs.den,sc.cov,sc.den,cu.cov,cu.den,cb.cov,cb.den';
@@ -450,6 +512,8 @@
     const PARAMS = [
       ['micro.dropConc', 'N (cm⁻³)'],
       ['micro.effRadiusUm', 'r_e (µm) *'],
+      ['spectrum.veff', 'ν_eff (Gamma)'],
+      ['seeding.inpConc', 'N_INP (L⁻¹) *'],
       ['layers.sc.coverage', I18N.t('sen.cov') + ' sc'],
       ['layers.cu.coverage', I18N.t('sen.cov') + ' cu'],
       ['layers.cs.coverage', I18N.t('sen.cov') + ' cs'],
@@ -478,6 +542,8 @@
       let min, max;
       if (path === 'micro.dropConc') { min = 50; max = 1200; }
       else if (path === 'micro.effRadiusUm') { min = 2; max = 20; }
+      else if (path === 'spectrum.veff') { min = 0.02; max = 0.45; }
+      else if (path === 'seeding.inpConc') { min = 5; max = 300; }
       else if (/\.coverage$/.test(path)) { min = 0.05; max = 1.0; }
       else if (path === 'aerosol.beta0') { min = 1e-5; max = 1e-3; }
       else { min = Math.max(0, def * 0.3); max = def * 1.7; }
@@ -562,6 +628,8 @@
     row.appendChild(btn(I18N.t('ex.iwxxm'), () => ta.value = global.Exporter.toIWXXM()));
     row.appendChild(btn(I18N.t('ex.bufr'), () => ta.value = JSON.stringify(global.Exporter.toBUFR(), null, 2)));
     row.appendChild(btn(I18N.t('ex.grib'), () => ta.value = JSON.stringify(global.Exporter.toGRIB(), null, 2)));
+    row.appendChild(btn(I18N.t('ex.icon'), () => ta.value = global.Exporter.toICONNamelist()));
+    row.appendChild(btn(I18N.t('ex.yaml'), () => ta.value = global.Exporter.toExperimentYAML()));
     row.appendChild(btn(I18N.t('ex.copy'), () => { if (navigator.clipboard) navigator.clipboard.writeText(ta.value); }));
     root.appendChild(row);
     const ep = document.createElement('input'); ep.placeholder = I18N.t('ex.endpoint'); ep.style.width = '70%'; root.appendChild(ep);

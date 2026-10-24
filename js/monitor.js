@@ -392,7 +392,8 @@
         `<div class="dv-row"><span>${I18N.t('dash.re')}</span><b>${lwc > 1e-6 ? re.toFixed(1) : '—'} µm</b>` +
           `<em>${I18N.t('dash.reDeriv', { v: lwc > 1e-6 ? reDeriv.toFixed(1) : '—' })}</em></div>` +
         `<div class="dv-row"><span>${I18N.t('dash.N')}</span><b>${N.toFixed(0)} cm⁻³</b></div>` +
-        (kr ? `<div class="dv-row"><span>${I18N.t('dash.rain')}</span><b>${kr.rainRate.toFixed(2)} mm/h</b></div>` +
+        (kr ? `<div class="dv-row"><span>${I18N.t('const.scheme')}</span><b>${(kr.scheme || 'kessler').toUpperCase()}</b></div>` +
+              `<div class="dv-row"><span>${I18N.t('dash.rain')}</span><b>${kr.rainRate.toFixed(2)} mm/h</b></div>` +
               `<div class="dv-row"><span>${I18N.t('dash.qr')}</span><b>${kr.qrTotal.toExponential(2)} kg/kg</b></div>` : '');
     }
     if (els.dashFormula) {
@@ -634,8 +635,66 @@
     ctx.fillStyle = '#5be39b'; ctx.beginPath(); ctx.arc(px, py, 4, 0, 7); ctx.fill();
   }
 
+  // 三方案对比曲线图（Kessler 1969 / KK2000 / ICON-SB06 随云滴数浓度 N_c 的雨强响应）
+  function drawSchemeComparison(cv, cmp) {
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H); ctx.fillStyle = '#070b15'; ctx.fillRect(0, 0, W, H);
+    if (!cmp || !cmp.N || !cmp.N.length) return;
+    const padL = 36, padR = 12, padT = 18, padB = 22;
+    const pw = W - padL - padR, ph = H - padT - padB;
+    let rMax = 0.5;
+    ['kessler', 'kk2000', 'sb06'].forEach(k => {
+      (cmp[k] || []).forEach(v => { if (isFinite(v) && v > rMax) rMax = v; });
+    });
+    rMax *= 1.12;
+    const xOf = i => padL + (i / Math.max(1, cmp.N.length - 1)) * pw;
+    const yOf = v => padT + (1 - clamp(v / rMax, 0, 1)) * ph;
+
+    ctx.strokeStyle = '#16223a'; ctx.fillStyle = '#5d6f93'; ctx.font = '9px sans-serif'; ctx.lineWidth = 1;
+    for (let k = 0; k <= 3; k++) {
+      const val = rMax * k / 3;
+      const y = yOf(val);
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+      ctx.fillText(val.toFixed(1), 4, y + 3);
+    }
+    const nMin = cmp.N[0], nMax = cmp.N[cmp.N.length - 1];
+    [100, 300, 600, 900].forEach(nv => {
+      if (nv < nMin || nv > nMax) return;
+      const x = padL + ((nv - nMin) / (nMax - nMin)) * pw;
+      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, H - padB); ctx.stroke();
+      ctx.fillText('N=' + nv, x - 14, H - 6);
+    });
+
+    const styles = [
+      ['kessler', '#ff8fa3', 'Kessler (1969)'],
+      ['kk2000', '#5be39b', 'KK2000 (2-Mom)'],
+      ['sb06', '#4fd1ff', 'ICON-SB06 (2-Mom)'],
+    ];
+    styles.forEach(([key, col, label], idx) => {
+      const arr = cmp[key] || [];
+      ctx.strokeStyle = col; ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      for (let i = 0; i < arr.length; i++) {
+        const x = xOf(i), y = yOf(arr[i]);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.fillStyle = col;
+      ctx.fillText('━ ' + label, padL + idx * 118, 12);
+    });
+
+    // 标出当前 N_c 垂直虚线
+    if (cmp.atCurrentN && isFinite(cmp.atCurrentN.N)) {
+      const curX = padL + clamp((cmp.atCurrentN.N - nMin) / (nMax - nMin), 0, 1) * pw;
+      ctx.strokeStyle = '#ffd166'; ctx.setLineDash([3, 3]); ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(curX, padT); ctx.lineTo(curX, H - padB); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
   global.Monitor = {
     init, update, addSnapshot, clearSnapshots, getSnapshots: () => snapshots, setAxis, syncTabLabels,
-    drawCurve, drawField, drawHeatmap, drawScatter, drawTaylor,
+    drawCurve, drawField, drawHeatmap, drawScatter, drawTaylor, drawSchemeComparison,
   };
 })(window);

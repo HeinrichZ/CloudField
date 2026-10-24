@@ -666,6 +666,77 @@ ok(Array.isArray(wv0.profile) && Array.isArray(wv0.bx) && wv0.dz > 0, '最差能
 ok(Math.abs(wv7.vis - wv0.vis) > 1e-3, '最差能见度随仿真时间变化', wv0.vis.toFixed(1) + '→' + wv7.vis.toFixed(1) + ' m');
 scW.on = saveW.on; scW.coverage = saveW.coverage; scW.density = saveW.density; Amod.STATE.windSpeed = saveWind;
 
+// ================= 15. ETH CLOUDLAB / ICON-LES 扩展与多方案诊断 =================
+section('15. ETH CLOUDLAB / ICON-LES 扩展与多方案诊断');
+// 1) 三方案并排对比（Kessler 1969 vs KK2000 vs ICON-SB06）：双矩方案雨强随 N_c 增大而减小（Albrecht 效应）
+const cmp = Kes.compareSchemes({ qc: 0.0018, qr: 0 });
+ok(cmp && Array.isArray(cmp.N) && cmp.N.length >= 6, 'Kessler.compareSchemes 返回 N_c 网格与三方案曲线');
+ok(Math.abs(cmp.kessler[0] - cmp.kessler[cmp.kessler.length - 1]) < 1e-9,
+  'Kessler 1969 单矩方案雨强对云滴数浓度 N_c 不敏感（Albrecht 盲区）');
+ok(cmp.kk2000[0] > cmp.kk2000[cmp.kk2000.length - 1] * 2,
+  'KK2000 双矩方案：N_c 升高显著抑制自动转化与雨强（Albrecht 第二间接效应）',
+  cmp.kk2000[0].toFixed(2) + ' → ' + cmp.kk2000[cmp.kk2000.length - 1].toFixed(2) + ' mm/h');
+ok(cmp.sb06[0] > cmp.sb06[cmp.sb06.length - 1] * 2,
+  'ICON-SB06 双矩方案：N_c 升高抑制自动转化且受谱宽 ν_eff 调制',
+  cmp.sb06[0].toFixed(2) + ' → ' + cmp.sb06[cmp.sb06.length - 1].toFixed(2) + ' mm/h');
+
+// 2) ETH CLOUDLAB 过冷层云播云（WBF 冰化沟槽 + 能见度跃升诊断）
+const svSeed = JSON.parse(JSON.stringify(Amod.STATE.seeding));
+const svSurfT = Amod.STATE.surfaceTemp;
+Amod.STATE.surfaceTemp = 0; // 1 km 处约 -6.5°C（低于 AgI -5°C 阈值）
+Amod.STATE.seeding.on = true;
+Amod.STATE.seeding.agent = 'AgI';
+Amod.STATE.seeding.inpConc = 200;
+Amod.STATE.seeding.glaciationEff = 0.88;
+Amod.STATE.seeding.alt = 1.0;
+const depUpwind = Amod.seedingDepletionAt(-12, 0, 1.0);
+const depDownwind = Amod.seedingDepletionAt(0, 0, 1.0);
+ok(depUpwind === 0 && depDownwind > 0.3, 'WBF 播云羽流：上风向无消耗、下风向轴线显著消耗过冷水',
+  `up=${depUpwind.toFixed(2)}, down=${depDownwind.toFixed(2)}`);
+const sdDiag = win.Physics.seedingDiagnostics(0);
+ok(sdDiag && sdDiag.seededVis > sdDiag.ambientVis * 1.3,
+  'ETH CLOUDLAB 诊断：播云消云沟槽内能见度显著高于背景过冷云',
+  `${sdDiag.ambientVis.toFixed(0)} m → ${sdDiag.seededVis.toFixed(0)} m (×${sdDiag.gainRatio.toFixed(2)})`);
+Amod.STATE.seeding = svSeed;
+Amod.STATE.surfaceTemp = svSurfT;
+
+// 3) Korolev 温度自适应混合相态 + 粒子谱有效方差 ν_eff 光学与雷达耦合
+const svAutoT = Amod.STATE.micro.autoPhaseTemp, svLapse = Amod.STATE.lapseRate, svSurfT2 = Amod.STATE.surfaceTemp;
+Amod.STATE.surfaceTemp = 10; Amod.STATE.lapseRate = 6.5;
+Amod.STATE.micro.autoPhaseTemp = true;
+const iceWarm = Amod.iceFractionAt(0.1); // > 0°C
+const iceHom = Amod.iceFractionAt(9.0);  // < -38°C (10 - 58.5 = -48.5°C)
+ok(iceWarm === 0 && iceHom === 1, 'Korolev 温度相态分配：>0°C 纯液水、<-38°C 完全同质冻结', `${iceWarm} / ${iceHom}`);
+Amod.STATE.micro.autoPhaseTemp = svAutoT; Amod.STATE.lapseRate = svLapse; Amod.STATE.surfaceTemp = svSurfT2;
+
+const betaNarrow = Mie.betaFromLWC_Mie(0.3, 8, 550, 0.05);
+const betaBroad = Mie.betaFromLWC_Mie(0.3, 8, 550, 0.35);
+ok(Math.abs(betaNarrow - betaBroad) > 1e-4, 'Mie 消光随多分散有效方差 ν_eff 变化', `${betaNarrow.toFixed(5)} vs ${betaBroad.toFixed(5)}`);
+const svVeff = Amod.STATE.spectrum.veff;
+Amod.STATE.spectrum.veff = 0.05;
+const dbzNarrow = win.Operators.radar(0).dBZ;
+Amod.STATE.spectrum.veff = 0.35;
+const dbzBroad = win.Operators.radar(0).dBZ;
+Amod.STATE.spectrum.veff = svVeff;
+ok(dbzBroad > dbzNarrow + 0.5, '气象雷达 6 阶矩反射率 Z 随谱宽 ν_eff 增大而显著增强', `${dbzNarrow.toFixed(2)} → ${dbzBroad.toFixed(2)} dBZ`);
+
+// 4) ICON-LES Namelist (.nml) 与实验 YAML 导出
+const nml = win.Exporter.toICONNamelist();
+const yml = win.Exporter.toExperimentYAML();
+ok(/&microphysics_nml/.test(nml) && /&cloudlab_seeding_nml/.test(nml), 'Exporter.toICONNamelist 生成标准 Fortran Namelist 块');
+ok(/experiment:/.test(yml) && /cloudlab_seeding:/.test(yml), 'Exporter.toExperimentYAML 生成结构化实验配置');
+
+// 5) 实测谱 r_e 传递、IWXXM/BUFR Magnus 露点一致性、探空验证 operativeRe 联动
+const svSpec = JSON.parse(JSON.stringify(Amod.STATE.spectrum));
+win.Spectrum.parseMeasured('2, 10\n5, 80\n12, 200\n20, 40');
+Amod.STATE.spectrum.type = 'measured';
+const reMeas = Amod.operativeRe(0.3);
+ok(Math.abs(reMeas - win.Spectrum.moments().re) < 1e-6, '实测谱模式下 operativeRe() 精确采用积分矩 r_e', reMeas.toFixed(2));
+Amod.STATE.spectrum = svSpec;
+const bufr = win.Exporter.toBUFR();
+const bufrDew = bufr.fields.find(x => x.f === 'dewpoint').v;
+ok(Math.abs(bufrDew - Number(Amod.dewAt(0).toFixed(2))) < 1e-6, 'BUFR 导出露点采用 Magnus 公式与主模型严格一致');
+
 // ================= 汇总 =================
 console.log('\n========================================');
 console.log('结果：' + pass + ' 通过 / ' + fail + ' 失败');

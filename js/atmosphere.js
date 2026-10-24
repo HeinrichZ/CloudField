@@ -68,13 +68,28 @@
 
     // —— 云微物理参数化（映射到具体方案参数，用于“诊断”）——
     micro: {
+      scheme: 'kessler',      // 参数化方案：kessler (1969 单矩) | kk2000 (Khairoutdinov-Kogan 双矩) | sb06 (Seifert-Beheng 双矩/ICON)
       effRadiusUm: 8.0,       // 云滴有效半径 re (µm)
       dropConc: 300,          // 云滴数浓度 N (cm⁻³)
       autoConvK: 1.0e-3,      // Kessler 自动转化系数 k1 (s⁻¹)
       autoConvQc0: 5.0e-4,    // 自动转化临界云水含量 qc0 (kg/kg)
       accretK: 2.2,           // 碰并( accretion )系数 k2
-      iceFrac: 0.0,           // 混合相冰相占比 0–1（影响散射/消光谱型）
+      iceFrac: 0.0,           // 混合相冰相占比 0–1（与 phases.ice 同步联动）
+      autoPhaseTemp: false,   // 按温度廓线自动分配混合相冰/水比（Korolev 0 ~ -38°C 区间）
       reMode: 'derived',      // r_e 来源：derived = 由 LWC 与 N 反推；fixed = 用 effRadiusUm 滑块
+    },
+
+    // —— ETH CLOUDLAB 过冷水云人工播云试验（Wegener–Bergeron–Findeisen 冰化消散沟）——
+    seeding: {
+      on: false,              // 是否启用播云消雾试验
+      agent: 'agi',           // 催化剂：agi (碘化银 AgI，活化温度 ≤ -4°C) | co2 (液态CO2/干冰，均质成核 ≤ -0.5°C)
+      inpConc: 80,            // 播撒冰核数浓度 N_INP (L⁻¹)
+      x0: -8.0,               // 播撒源水平位置 X (km)
+      z0: 0.0,                // 播撒源水平位置 Y/Z (km)
+      alt: 1.1,               // 播撒作业高度 (km)
+      width: 2.2,             // 初始播撒羽流半宽 (km)
+      diffK: 0.30,            // 下风向湍流扩散展宽系数
+      glaciationEff: 0.85,    // WBF 水汽竞争冰化沉降对液水消光的削减效率 (0–0.95)
     },
 
     // —— 粒子谱描述（#4）：Gamma / 对数正态 / 实测谱 ——
@@ -100,64 +115,104 @@
       albedo: true, satellite: true, lidar: true, radar: true,
     },
 
-    // —— Kessler 单柱预报状态（q_c / q_r，按层，kg/kg）——
+    // —— Kessler / 多方案单柱预报状态（q_c / q_r，按层，kg/kg）——
     kessler: {
       on: true,
       qc: { ci: 0, cs: 0, sc: 0, cu: 0, cb: 0 },
       qr: { ci: 0, cs: 0, sc: 0, cu: 0, cb: 0 },
-      rainRate: 0, lastPac: 0, lastPgr: 0, steps: 0,
+      qi: { ci: 0, cs: 0, sc: 0, cu: 0, cb: 0 },
+      rainRate: 0, lastPac: 0, lastPgr: 0, lastPwbf: 0, steps: 0,
     },
   };
 
   // ============ 常量 ============
   const G = 9.80665, R = 287.05;       // 重力、气体常数
-  // 风平流换算：m/s → km/s。取 0.01（= 物理值 0.001 的 10× 时间加速，沙盒演示用），
-  // 让 3D 云层与诊断面板在可观察的时间内明显演进；如需物理实时，改为 0.001。
   const WIND_SCALE = 0.01;
   const RHO_W = 1000;                  // 水密度 kg/m³
   const MAX_ALT = 15;                  // 模拟顶高 km
-  const LWC_MAX = 1.2;                 // 密度场归一化上限 g/m³（见文档“密度场归一化”）
+  const LWC_MAX = 1.2;                 // 密度场归一化上限 g/m³
   const KOSCHMEIER_EPS = 0.02;         // 能见度对比阈值 ε（Koschmieder）
 
   // ============ 基础气象计算 ============
-  // Magnus 公式：由温度 T(°C) 与相对湿度 RH(%) 求露点 Td(°C)
-  //   γ = ln(RH/100) + a·T/(b+T)，Td = b·γ/(a−γ)，a=17.27, b=237.7
   function dewpointFromRH(T, RH) {
     const a = 17.27, b = 237.7;
     const rh = Math.min(100, Math.max(0.1, RH)) / 100;
     const g = Math.log(rh) + a * T / (b + T);
     return b * g / (a - g);
   }
-  // 环境慢变偏移（envT/envRH 由主循环按时间写入）；滑块的 surfaceTemp/RH 仍是基准值
   function surfaceTempEff() { return STATE.surfaceTemp + (STATE.envT || 0); }
   function surfaceRHEff() { return Math.min(100, Math.max(1, STATE.surfaceRH + (STATE.envRH || 0))); }
-  function dewAt(z) {                  // 露点温度随高度 °C（地面用 Magnus，向上按 dewLapse 递减）
+  function dewAt(z) {
     return dewpointFromRH(surfaceTempEff(), surfaceRHEff()) - STATE.dewLapse * z;
   }
   function tempAt(z) { return surfaceTempEff() - STATE.lapseRate * z; }
-  function lclHeight() {               // 抬升凝结高度 (km)：z_LCL = (T − Td) / Γ_d
+  function lclHeight() {
     const T0 = surfaceTempEff();
     const Td0 = dewpointFromRH(T0, surfaceRHEff());
     const d = T0 - Td0;
-    const gamma = Math.max(4, STATE.dryLapseRate || 9.8);   // K/km，默认干绝热 9.8
+    const gamma = Math.max(4, STATE.dryLapseRate || 9.8);
     return Math.max(0, d / gamma);
   }
-  function pressureAt(z) {             // 压高公式（静力平衡，barometric）
+  function pressureAt(z) {
     const Tk0 = surfaceTempEff() + 273.15;
     const Tk = tempAt(z) + 273.15;
     const lr = Math.max(0.05, STATE.lapseRate);
-    const expo = 1000 * G / (R * lr);  // lr 为 K/km → Γ=lr/1000 K/m，故指数需 ×1000
+    const expo = 1000 * G / (R * lr);
     return STATE.surfacePressure * Math.pow(Tk / Tk0, expo);
   }
   function airDensityAt(z) {
-    const p = pressureAt(z) * 100;     // Pa
+    const p = pressureAt(z) * 100;
     const Tk = tempAt(z) + 273.15;
     return p / (R * Tk);
   }
-  function freezingLevel() {           // 0°C 层高度 km
+  function freezingLevel() {
     const T0 = surfaceTempEff();
     if (STATE.lapseRate <= 0) return T0 <= 0 ? 0 : 999;
     return Math.max(0, T0 / STATE.lapseRate);
+  }
+
+  // 温度自适应或手动统一的冰相比例（打通 micro.iceFrac 与 phases.ice）
+  function iceFractionAt(z) {
+    if (STATE.micro && STATE.micro.autoPhaseTemp && z != null) {
+      const T = tempAt(z);
+      if (T >= 0) return 0;
+      if (T <= -38) return 1;
+      // Korolev 混合相温度分配曲线：0°C 纯水 → -38°C 同质冻结纯冰
+      return Math.min(1, Math.max(0, Math.pow(-T / 38, 1.35)));
+    }
+    return Math.min(1, Math.max(0, (STATE.micro && STATE.micro.iceFrac) || 0));
+  }
+
+  // ETH CLOUDLAB 人工播云下风向消散羽流（Wegener–Bergeron–Findeisen 冰化减消光因子）
+  // 返回 [0, 1] 的液态水消光削减比例（0 = 无播云影响，>0 = 羽流内过冷水转冰并沉降）
+  function seedingDepletionAt(x, y, z) {
+    const sd = STATE.seeding;
+    if (!sd || !sd.on) return 0;
+    // 垂直厚度窗口：播撒层上下 ±0.9 km
+    const dz = Math.abs(z - (sd.alt != null ? sd.alt : 1.1));
+    if (dz > 0.95) return 0;
+    const vWeight = Math.exp(-Math.pow(dz / 0.55, 2));
+
+    // 温度活化窗口：AgI 需 ≤ -4°C（若环境偏暖则给保底教学演示权重 0.65，低温下 1.0）；液态 CO2 需 ≤ -0.5°C
+    const T = tempAt(z);
+    const thresh = sd.agent === 'co2' ? -0.5 : -4.0;
+    const tFactor = T <= thresh ? 1.0 : (T <= 2.0 ? 0.80 : 0.60);
+
+    // 顺风向（来向 windDir + 180° = 去向）计算羽流轴线投影
+    const goRad = ((STATE.windDir || 270) + 180) * Math.PI / 180;
+    const ux = Math.sin(goRad), uy = Math.cos(goRad);
+    const dx = x - (sd.x0 != null ? sd.x0 : -8.0);
+    const dy = y - (sd.z0 != null ? sd.z0 : 0.0);
+    const along = dx * ux + dy * uy;          // 下风向距离 km
+    const cross = -dx * uy + dy * ux;         // 横风向偏距 km
+    if (along < -1.0 || along > 32.0) return 0;
+
+    const alongRamp = along < 0 ? Math.exp(-along * along * 2.5) : 1.0;
+    const halfW = Math.max(0.4, (sd.width || 2.2) + (sd.diffK || 0.30) * Math.sqrt(Math.max(0, along)));
+    const crossWeight = Math.exp(-Math.pow(cross / halfW, 2));
+    const inpSat = 1 - Math.exp(-Math.max(0, sd.inpConc || 80) / 35);
+    const eff = Math.min(0.95, Math.max(0, sd.glaciationEff != null ? sd.glaciationEff : 0.85));
+    return Math.min(0.95, eff * inpSat * tFactor * vWeight * alongRamp * crossWeight);
   }
 
   // ============ 云层有效范围（随对流/生消变化）============
@@ -172,7 +227,6 @@
         top = Math.min(15, L.base + (L.top - L.base) * grow);
       }
       base = Math.max(0, L.base);
-      // 生消调制：覆盖率/密度随 life 相位缓慢增减（周期约 42 s），让云层“长出来/散掉”可见
       const lifeMod = 0.78 + 0.30 * life;
       const densMod = 0.85 + 0.25 * life;
       return {
@@ -200,7 +254,6 @@
     return f;
   }
   function sampleFields(x, y, z, layers, wind, time) {
-    // 与着色器一致：wx = sin(dir)、wz = cos(dir)（dir 为去向）
     const wx = Math.sin((wind.dir || 0) * Math.PI / 180) * (wind.x || 0) * WIND_SCALE;
     const wz = Math.cos((wind.dir || 0) * Math.PI / 180) * (wind.x || 0) * WIND_SCALE;
     const px = x - wx * time, pz = z - wz * time;
@@ -224,47 +277,43 @@
         lwc = Math.max(lwc, lwcLayer);
       }
     }
+    // 叠加 ETH CLOUDLAB 人工播云 WBF 冰化消散沟减消光效应
+    const seedDep = seedingDepletionAt(x, y, z);
+    if (seedDep > 0) {
+      density *= (1 - seedDep);
+      lwc *= (1 - seedDep);
+    }
     density = Math.min(1.5, density);
-    return { density, lwc, temp: tempAt(z), dew: dewAt(z), pressure: pressureAt(z) };
+    return { density, lwc, seedDepletion: seedDep, temp: tempAt(z), dew: dewAt(z), pressure: pressureAt(z) };
   }
 
   // ============ 能见度 / 消光（可信度核心）============
-  // 消光系数 β_ext = (3 · LWC) / (2 · ρ_w · r_e)   [m⁻¹]
-  //   LWC: kg/m³, r_e: m；单分散球滴近似（米氏/HG 近似）
   function extinctionFromLWC(lwc_gm3, effRadiusUm) {
-    const lwc = lwc_gm3 / 1000;                 // g/m³ -> kg/m³
+    const lwc = lwc_gm3 / 1000;
     const re = Math.max(1e-6, effRadiusUm * 1e-6);
-    return (3 * lwc) / (2 * RHO_W * re);        // m⁻¹
+    return (3 * lwc) / (2 * RHO_W * re);
   }
-  // Koschmieder 能见度：V = -ln(ε) / β_ext = ln(1/ε)/β_ext
   function visibilityFromExt(beta) {
     if (beta <= 1e-6) return Infinity;
-    return -Math.log(KOSCHMEIER_EPS) / beta;     // m
+    return -Math.log(KOSCHMEIER_EPS) / beta;
   }
-  // 由密度场派生的三个微物理量（与 clouds.js 着色器里的公式逐条对应，改一处要同步另一处）
-  //   LWC = min(1,d) · LWC_MAX · (冰相 ×0.4)                      [g/m³]
-  //   β[km⁻¹] = 1000 · 3·LWC_kgm3 / (2·1000·r_e_m) = 1500 · LWC_gm3 / r_e_um
-  //   r_e = (3·LWC/(4π·ρ_w·N))^(1/3)                              [µm]
   function lwcFromDensity(d, kind) { return Math.min(1, Math.max(0, d)) * LWC_MAX * (kind === 'ice' ? 0.4 : 1.0); }
-  // 返回 km⁻¹。换算链：β[m⁻¹] = 1.5·LWC_gm3/r_e_um，×1000 得 km⁻¹ → 系数 1500。
-  // 与 extinctionFromLWC() 的关系：betaFromLWC() ≡ extinctionFromLWC()×1000（数值相等、单位不同）。
-  // 警告：系数 1500 是正确的 km⁻¹ 系数，不要“修正”为 1.5（那会小 1000 倍）。
   function betaFromLWC(lwc_gm3, reUm) { return 1500 * lwc_gm3 / Math.max(0.5, reUm); }
   function effRadiusFromLWC(lwc_gm3, N_cm3) {
     const lwcKg = lwc_gm3 / 1000, Nm3 = Math.max(1, N_cm3) * 1e6;
     return 1e6 * Math.pow(Math.max(1e-20, 3 * lwcKg / (4 * Math.PI * RHO_W * Nm3)), 1 / 3);
   }
-  // 聚合指标口径：总云量按各层云量随机重叠（相互独立）合成，1−Π(1−cᵢ)。
-  // 这不是卫星反演的面积占比，也不是云光学厚度阈值统计，复现时口径要写清楚。
   function totalCloudCover() {
     let clear = 1;
     effectiveLayers().forEach(L => { clear *= (1 - Math.min(1, L.coverage)); });
     return (1 - clear) * 100;
   }
 
-  // 有效半径的单一来源：derived 时由 LWC 与 N 反推（闭合 N→r_e→β 的 Twomey 链）；
-  // fixed 时使用 effRadiusUm 滑块值。上下限 [1, 60] µm 防止极端 LWC/N 造成数值发散。
   function operativeRe(lwcGm3) {
+    if (STATE.spectrum && STATE.spectrum.type === 'measured' && global.Spectrum && typeof global.Spectrum.moments === 'function') {
+      const mr = global.Spectrum.moments().re;
+      if (isFinite(mr) && mr > 0) return Math.max(0.5, mr);
+    }
     const m = STATE.micro;
     if (m.reMode === 'fixed') return Math.max(0.5, m.effRadiusUm);
     return Math.min(60, Math.max(1, effRadiusFromLWC(lwcGm3, m.dropConc)));
@@ -274,8 +323,6 @@
     const beta = extinctionFromLWC(f.lwc, operativeRe(f.lwc));
     return { vis: visibilityFromExt(beta), beta, lwc: f.lwc };
   }
-  // 最差能见度：先按高度层做水平网格扫描（默认 3×3，±12 km），得到每层的最小值剖面，
-  // 再在剖面里找全局最小。返回 profile / z0 / dz / 每层最差点，供上层做滞回（避免高度来回跳）。
   function worstVisibility(layers, wind, time, opts) {
     opts = opts || {};
     const n = Math.max(1, opts.n || 3);
@@ -307,23 +354,34 @@
   }
 
   // ============ 微物理参数化映射（诊断叙事）============
+  const SCHEME_LABELS = {
+    kessler: 'Kessler (1969) 单矩暖云方案（阈值型自动转化；不依赖 N）',
+    kk2000: 'Khairoutdinov & Kogan (2000) 双矩方案（P_ac ∝ q_c^2.47 · N_c^-1.79；LES 基准）',
+    sb06: 'Seifert & Beheng (2006) 双矩方案（ICON-LES 原生；含谱宽 ν 与内部时间尺度 τ）',
+  };
   function microMapping() {
     const m = STATE.micro;
+    const sd = STATE.seeding || {};
+    const schemeName = SCHEME_LABELS[m.scheme] || SCHEME_LABELS.kessler;
     return {
-      scheme: 'Kessler (1969) 暖云参数化（单柱 q_c/q_r 积分；不反馈 3D 渲染）',
+      scheme: schemeName + (sd.on ? ' + ETH CLOUDLAB WBF 过冷水播云冰化' : ''),
       params: [
+        { key: 'scheme', label: '微物理参数化方案', value: m.scheme || 'kessler', unit: '—',
+          mapsTo: '切换 Kessler (1969) / KK2000 / ICON-SB06 (2006) 自动转化与碰并核' },
         { key: 'effRadiusUm', label: '云滴有效半径 r_e', value: m.effRadiusUm, unit: 'µm',
-          mapsTo: '消光/散射谱型与自动转化尺度依赖；决定能见度与雷达反射率' },
-        { key: 'dropConc', label: '云滴数浓度 N', value: m.dropConc, unit: 'cm⁻³',
-          mapsTo: '影响 r_e（N↑→r_e↓→消光↑→能见度↓），与 Twomey 效应相关' },
+          mapsTo: '消光/散射尺度；决定能见度与米氏消光效率 Q_ext' },
+        { key: 'dropConc', label: '云滴数浓度 N_c', value: m.dropConc, unit: 'cm⁻³',
+          mapsTo: 'Twomey 效应（N↑→r_e↓→β↑）及双矩方案 Albrecht 效应（N↑→抑制自动转化 P_ac）' },
         { key: 'autoConvK', label: '自动转化系数 k1', value: m.autoConvK, unit: 's⁻¹',
-          mapsTo: 'Kessler P_ac = k1·(q_c − qc0)：雨滴自动转化速率（参与单柱积分）' },
+          mapsTo: 'Kessler P_ac = k1·(q_c − qc0)：单矩雨滴自动转化速率系数' },
         { key: 'autoConvQc0', label: '自动转化阈值 qc0', value: m.autoConvQc0, unit: 'kg/kg',
-          mapsTo: 'Kessler 临界云水含量（常用 0.5–1 g/kg）：低于此不产生雨（参与单柱积分）' },
+          mapsTo: 'Kessler 临界云水含量（常用 0.5–1 g/kg）：低于此阈值单矩方案不产雨' },
         { key: 'accretK', label: '碰并系数 k2', value: m.accretK, unit: '—',
-          mapsTo: 'Kessler P_gr = k2·q_c·q_r：云水碰并增长（参与单柱积分）' },
-        { key: 'iceFrac', label: '冰相占比', value: m.iceFrac, unit: '—',
-          mapsTo: '混合相/冰云分支；影响散射谱型与消光（冰晶消光弱于水滴）' },
+          mapsTo: 'P_gr = k2·q_c·q_r：雨滴下落收集云水增长速率' },
+        { key: 'iceFrac', label: '冰相占比 / Korolev 温度分配', value: m.iceFrac, unit: '—',
+          mapsTo: '混合相水/冰质量分配；与相态分档及 Korolev (0 ~ -38°C) 曲线联动' },
+        { key: 'inpConc', label: '播云冰核浓度 N_INP', value: sd.inpConc || 0, unit: 'L⁻¹',
+          mapsTo: 'ETH CLOUDLAB 过冷水层云播撒（WBF 水汽竞争冰化沉降 → 下风向高能见度消散沟）' },
       ],
     };
   }
@@ -351,6 +409,7 @@
     for (const k of scalarKeys) if (s[k] !== undefined) STATE[k] = s[k];
     if (s.layers) for (const k of LAYER_ORDER) if (s.layers[k]) Object.assign(STATE.layers[k], s.layers[k]);
     if (s.micro) Object.assign(STATE.micro, s.micro);
+    if (s.seeding) Object.assign(STATE.seeding, s.seeding);
     if (s.spectrum) Object.assign(STATE.spectrum, s.spectrum);
     if (s.phases) Object.assign(STATE.phases, s.phases);
     if (s.aerosol) Object.assign(STATE.aerosol, s.aerosol);
@@ -360,9 +419,6 @@
   }
 
   // ============ 探空验证（最小真实验证）============
-  // 公开探空（radiosonde）通常可在 University of Wyoming (weather.uwyo.edu) 获取。
-  // 内置一份“代表性样本”（示意），用于把计算能见度与实测并排对照；
-  // 可通过“导入探空”载入真实数据（格式：高度km, 气压hPa, 温度°C, 露点°C）。
   const RADIOSONDE_SAMPLE = {
     station: '示例站 (representative sample)',
     note: '示意数据，非实测；请用导入功能载入真实 radiosonde',
@@ -398,9 +454,10 @@
   }
 
   global.Atmosphere = {
-    APP_NAME, SNAPSHOT_VERSION, CLOUD_META, LAYER_ORDER, STATE,
+    APP_NAME, SNAPSHOT_VERSION, CLOUD_META, LAYER_ORDER, STATE, SCHEME_LABELS,
     LWC_MAX, KOSCHMEIER_EPS, RHO_W, MAX_ALT, WIND_SCALE,
     lclHeight, tempAt, dewAt, dewpointFromRH, pressureAt, airDensityAt, freezingLevel,
+    iceFractionAt, seedingDepletionAt,
     effectiveLayers, sampleFields,
     extinctionFromLWC, visibilityFromExt, visibilityAtAltitude, worstVisibility,
     lwcFromDensity, betaFromLWC, effRadiusFromLWC, operativeRe, totalCloudCover,

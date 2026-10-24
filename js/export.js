@@ -1,7 +1,9 @@
-/* export.js — 业务系统输出（#8）
- * 把诊断结果导出为标准行业报文：METAR/AVMET 文本、IWXXM XML、
- * BUFR / GRIB 的人类可读等效字段集（二进制编码需按 WMO 模板实现，标注于注释）。
- * 并提供"推送到 API 服务端"的能力（fetch 桩）。
+/* export.js — 业务系统与大涡模拟前处理输出（#8 + ICON-LES / ETH CLOUDLAB 前处理配置）
+ * 把诊断结果导出为标准行业报文与数值模式前处理配置：
+ *   1) METAR/AVMET 文本、IWXXM XML、BUFR / GRIB 等效字段集
+ *   2) ICON-LES / WRF Fortran Namelist (.nml) 微物理与播云前处理配置块
+ *   3) ETH CLOUDLAB 敏感性试验 YAML 对照单
+ *   4) 推送到 API 服务端（fetch 桩）
  */
 (function (global) {
   'use strict';
@@ -20,7 +22,7 @@
     return { vis: w.vis, alt: w.alt, cover, ops, re: info.re != null ? info.re : A.operativeRe(0), lwc: info.lwc || 0 };
   }
 
-  // —— METAR / AVMET 文本（自包含，站号与时刻为占位）——
+  // —— METAR / AVMET 文本 ——
   function toMETAR(opts) {
     opts = opts || {};
     const r = readouts();
@@ -54,9 +56,7 @@
       '</Metar>';
   }
 
-  // —— BUFR / GRIB 等效字段集（人类可读；二进制编码需 WMO 模板）——
-  // 注：真实 BUFR 需按 WMO 模板（如 307080 地面观测、307091 云/能见度）
-  //     做二进制编码；此处输出结构化字段，供接入编码器。
+  // —— BUFR / GRIB 等效字段集 ——
   function toBUFR() {
     const r = readouts();
     return {
@@ -91,6 +91,83 @@
     };
   }
 
+  // —— ICON-LES / WRF 风格 Fortran Namelist (.nml) 前处理配置导出 ——
+  function toICONNamelist() {
+    const m = S.micro || {};
+    const sd = S.seeding || {};
+    const sp = S.spectrum || {};
+    const schemeId = m.scheme === 'sb06' ? 4 : (m.scheme === 'kk2000' ? 3 : 1);
+    const nuShape = Math.max(0, Math.min(4, (1 / Math.max(0.05, sp.veff || 0.10)) - 3));
+    return [
+      '! ==========================================================================',
+      '! CloudField Pre-processor Namelist for ICON-LES / 2-Moment Microphysics',
+      '! Reference: ETH CLOUDLAB / Seifert & Beheng (2006) / Khairoutdinov & Kogan (2000)',
+      '! ==========================================================================',
+      '&microphysics_nml',
+      '  inwp_gscp          = ' + schemeId + ',              ! 1=Kessler(1-mom), 3=KK2000(2-mom), 4=SB06(ICON 2-mom)',
+      '  scheme_name        = "' + (m.scheme || 'kessler') + '",',
+      '  qnc_const          = ' + (m.dropConc * 1e6).toExponential(3) + ',     ! Cloud droplet number conc. N_c [m^-3]',
+      '  re_fixed_um        = ' + Number(m.effRadiusUm).toFixed(2) + ',          ! Reference effective radius [um]',
+      '  re_mode            = "' + (m.reMode || 'derived') + '",',
+      '  nu_c_shape         = ' + nuShape.toFixed(2) + ',          ! Gamma shape parameter from v_eff=' + Number(sp.veff || 0.1).toFixed(2),
+      '  k_autoconv         = ' + Number(m.autoConvK).toExponential(3) + ',     ! Autoconversion rate coeff k1 [s^-1]',
+      '  qc0_threshold      = ' + Number(m.autoConvQc0).toExponential(3) + ',     ! Critical cloud water mixing ratio [kg/kg]',
+      '  k_accretion        = ' + Number(m.accretK).toFixed(2) + ',          ! Accretion coeff k2',
+      '  l_korolev_mixed    = .' + (m.autoPhaseTemp ? 'TRUE' : 'FALSE') + '.,       ! T-dependent mixed-phase partitioning (0..-38 degC)',
+      '/',
+      '',
+      '&cloudlab_seeding_nml',
+      '  l_seeding_active   = .' + (sd.on ? 'TRUE' : 'FALSE') + '.,       ! Glaciogenic cloud seeding (WBF process)',
+      '  seeding_agent      = "' + (sd.agent || 'agi').toUpperCase() + '",          ! AGI (AgI, T<=-4C) or CO2 (Liquid CO2, T<=-0.5C)',
+      '  ninp_seed_liter    = ' + Number(sd.inpConc || 80).toFixed(1) + ',          ! Seeded INP concentration [L^-1]',
+      '  seed_x0_km         = ' + Number(sd.x0 != null ? sd.x0 : -8.0).toFixed(2) + ',',
+      '  seed_z_alt_km      = ' + Number(sd.alt != null ? sd.alt : 1.1).toFixed(2) + ',',
+      '  plume_halfwidth_km = ' + Number(sd.width || 2.2).toFixed(2) + ',',
+      '  turbulent_diff_k   = ' + Number(sd.diffK || 0.30).toFixed(3) + ',',
+      '  wbf_glaciation_eff = ' + Number(sd.glaciationEff != null ? sd.glaciationEff : 0.85).toFixed(2) + ',',
+      '/',
+      '',
+      '&sounding_init_nml',
+      '  t_sfc_degc         = ' + Number(S.surfaceTemp).toFixed(2) + ',',
+      '  p_sfc_hpa          = ' + Number(S.surfacePressure).toFixed(1) + ',',
+      '  rh_sfc_pct         = ' + Number(S.surfaceRH).toFixed(1) + ',',
+      '  lapse_rate_k_km    = ' + Number(S.lapseRate).toFixed(2) + ',',
+      '  wind_speed_ms      = ' + Number(S.windSpeed).toFixed(2) + ',',
+      '  wind_dir_deg       = ' + Number(S.windDir).toFixed(1) + ',',
+      '/',
+    ].join('\n');
+  }
+
+  // —— ETH CLOUDLAB 敏感性试验对照单（YAML）——
+  function toExperimentYAML() {
+    const r = readouts();
+    const sdDiag = P.seedingDiagnostics ? P.seedingDiagnostics(0) : null;
+    const cmp = global.Kessler && global.Kessler.compareSchemes ? global.Kessler.compareSchemes() : null;
+    return [
+      '# CloudField Sensitivity Experiment Manifest (ETH CLOUDLAB / ICON-LES Sandbox)',
+      'experiment:',
+      '  scheme: ' + (S.micro.scheme || 'kessler'),
+      '  re_mode: ' + (S.micro.reMode || 'derived'),
+      '  droplet_conc_cm3: ' + S.micro.dropConc,
+      '  effective_radius_um: ' + Number(r.re).toFixed(2),
+      '  spectral_veff: ' + Number((S.spectrum && S.spectrum.veff) || 0.10).toFixed(3),
+      '  korolev_temp_phase: ' + (!!S.micro.autoPhaseTemp),
+      'scheme_comparison_at_current_N:',
+      '  rain_rate_mm_h:',
+      '    kessler_1969: ' + (cmp ? cmp.atCurrentN.kessler.toFixed(3) : '0.000'),
+      '    kk2000_2mom: ' + (cmp ? cmp.atCurrentN.kk2000.toFixed(3) : '0.000'),
+      '    sb06_icon_2mom: ' + (cmp ? cmp.atCurrentN.sb06.toFixed(3) : '0.000'),
+      'cloudlab_seeding:',
+      '  enabled: ' + (!!(S.seeding && S.seeding.on)),
+      '  agent: ' + ((S.seeding && S.seeding.agent) || 'agi'),
+      '  inp_conc_L: ' + ((S.seeding && S.seeding.inpConc) || 80),
+      '  ambient_visibility_m: ' + (sdDiag ? Math.round(sdDiag.visAmbientM) : 'NA'),
+      '  in_plume_visibility_m: ' + (sdDiag ? Math.round(sdDiag.visSeededM) : 'NA'),
+      '  visibility_gain_ratio: ' + (sdDiag ? sdDiag.gainRatio.toFixed(2) : '1.00'),
+      '  cat1_minima_recovered: ' + (sdDiag ? sdDiag.cat1Recovered : false),
+    ].join('\n');
+  }
+
   // —— 推送到业务系统（fetch 桩）——
   function pushTo(endpoint, payload, opts) {
     opts = opts || {};
@@ -104,5 +181,5 @@
     }).then(r => r.ok ? r : Promise.reject(new Error('HTTP ' + r.status)));
   }
 
-  global.Exporter = { toMETAR, toIWXXM, toBUFR, toGRIB, pushTo, readouts };
+  global.Exporter = { toMETAR, toIWXXM, toBUFR, toGRIB, toICONNamelist, toExperimentYAML, pushTo, readouts };
 })(window);

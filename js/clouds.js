@@ -66,6 +66,11 @@
   uniform float uMicroRe;         // 有效半径 µm（β 用）
   uniform float uMicroN;          // 云滴数浓度 cm⁻³（派生 rₑ 用）
   uniform float uReMode;          // 1 = r_e 由 LWC 与 N 反推；0 = 用 uMicroRe
+  // ETH CLOUDLAB 过冷水层云人工播云消散沟（WBF 冰化减消光）
+  uniform float uSeedOn;
+  uniform vec3  uSeedOrigin;      // (x0, alt, z0) km
+  uniform vec2  uSeedDir;         // 顺风向单位向量 (ux, uz)
+  uniform vec3  uSeedParams;      // (halfWidth, diffK, eff)
 
   float hash3(vec3 p){
     p = fract(p * 0.3183099 + 0.1);
@@ -113,6 +118,22 @@
   float totalDensity(vec3 p){
     float d = 0.0;
     for(int i=0;i<${MAX_LAYERS};i++){ d += layerDensity(p, i); }
+    if(uSeedOn > 0.5 && d > 0.0){
+      float dz = abs(p.y - uSeedOrigin.y);
+      if(dz < 0.95){
+        vec2 dp = p.xz - uSeedOrigin.xz;
+        float along = dot(dp, uSeedDir);
+        float cross = -dp.x * uSeedDir.y + dp.y * uSeedDir.x;
+        if(along > -1.0 && along < 32.0){
+          float aRamp = (along < 0.0) ? exp(-along * along * 2.5) : 1.0;
+          float hw = max(0.4, uSeedParams.x + uSeedParams.y * sqrt(max(0.0, along)));
+          float cW = exp(-(cross * cross) / (hw * hw));
+          float vW = exp(-(dz * dz) / (0.55 * 0.55));
+          float dep = clamp(uSeedParams.z * aRamp * cW * vW, 0.0, 0.95);
+          d *= (1.0 - dep);
+        }
+      }
+    }
     return d;
   }
   float lightTransmittance(vec3 p){
@@ -435,7 +456,8 @@
       'uBaseTop','uCovDen','uScaleDet','uType','uSurfaceTemp','uLapse','uSurfacePressure',
       'uOcc','uOccAvail','uOccDomX','uOccSkip','uJitter',
       'uSliceAlt','uSliceOn','uTintTex','uTintField','uTintAmt','uTintRange',
-      'uLwcScale','uMicroRe','uMicroN','uReMode','uFieldBand','uBandT','uBandP'];
+      'uLwcScale','uMicroRe','uMicroN','uReMode','uFieldBand','uBandT','uBandP',
+      'uSeedOn','uSeedOrigin','uSeedDir','uSeedParams'];
     for (const n of names) this.u[n] = gl.getUniformLocation(this.prog, n);
     this.uComp = {
       uScene: gl.getUniformLocation(this.progComp, 'uScene'),
@@ -698,10 +720,20 @@
     gl.uniform1i(u.uTintField, field === 'off' ? 0 : (field === 'lwc' ? 1 : field === 'beta' ? 2 : 3));
     gl.uniform1f(u.uTintAmt, S.tintAmt == null ? 0.45 : S.tintAmt);
     gl.uniform2f(u.uTintRange, range[0], range[1]);
-    gl.uniform1f(u.uLwcScale, Atmosphere.LWC_MAX * (1 - 0.6 * S.micro.iceFrac));
+    gl.uniform1f(u.uLwcScale, Atmosphere.LWC_MAX * (1 - 0.6 * (Atmosphere.iceFractionAt ? Atmosphere.iceFractionAt(S.sliceAlt) : S.micro.iceFrac)));
     gl.uniform1f(u.uMicroRe, S.micro.effRadiusUm);
     gl.uniform1f(u.uMicroN, S.micro.dropConc);
     gl.uniform1f(u.uReMode, S.micro.reMode === 'derived' ? 1 : 0);
+
+    // ETH CLOUDLAB 人工播云下风向消散沟 uniform
+    const sd = S.seeding || {};
+    const goRad = ((S.windDir || 270) + 180) * Math.PI / 180;
+    const inpSat = 1 - Math.exp(-Math.max(0, sd.inpConc || 80) / 35);
+    const eff = Math.min(0.95, Math.max(0, (sd.glaciationEff != null ? sd.glaciationEff : 0.85) * inpSat));
+    gl.uniform1f(u.uSeedOn, sd.on ? 1 : 0);
+    gl.uniform3f(u.uSeedOrigin, sd.x0 != null ? sd.x0 : -8.0, sd.alt != null ? sd.alt : 1.1, sd.z0 != null ? sd.z0 : 0.0);
+    gl.uniform2f(u.uSeedDir, Math.sin(goRad), Math.cos(goRad));
+    gl.uniform3f(u.uSeedParams, sd.width || 2.2, sd.diffK || 0.30, eff);
 
     // 色标 LUT：先确保纹理存在，再按需刷新（顺序反了会绑到空纹理上）
     if (global.CMap) {
