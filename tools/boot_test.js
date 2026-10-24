@@ -833,6 +833,38 @@ win.TimeSeries.applyDefault();
 win.TimeSeries.visibilityCurve(8);
 ok(Math.abs(Amod.STATE.surfaceTemp - tempBeforeTS) < 1e-6, 'TimeSeries.visibilityCurve 计算后无损还原调用前的场景温度与状态');
 
+// 9) 第三轮科学可靠性与工具性闭环验证（同质冻结硬约束、Lidar 双程衰减、自定义探空同化、预设重置播云、多网格 worstVisibilityDetailed）
+const snapBefore9 = Amod.serialize();
+Amod.STATE.surfaceTemp = 15; Amod.STATE.lapseRate = 6.5; Amod.STATE.micro.autoPhaseTemp = false;
+Amod.STATE.phases = { water: 1, ice: 0, snow: 0, graupel: 0, hail: 0 };
+const pfHigh = win.Physics.phaseFractions(10.0, 0, 0); // 10 km 处 T = -50°C <= -38°C
+ok(pfHigh.water === 0 && (pfHigh.ice + pfHigh.snow) > 0.99,
+  '同质冻结硬约束：即使未开启 autoPhaseTemp，T ≤ -38°C 高空云层液态水自动冻结为冰/雪晶',
+  JSON.stringify(pfHigh));
+
+const lid = win.Operators.lidar(0);
+ok(lid && isFinite(lid.betaBack) && isFinite(lid.betaBackUnatten) && lid.betaBack <= lid.betaBackUnatten && isFinite(lid.depolRatio),
+  '激光雷达算子包含 Beer-Lambert 双程衰减饱和 (betaBack <= betaBackUnatten) 与线性退偏比 depolRatio',
+  `att=${lid.betaBack.toExponential(2)}, unatt=${lid.betaBackUnatten.toExponential(2)}, δ=${lid.depolRatio.toFixed(2)}`);
+
+const customSondeTxt = '0.0, 1008, 21.0, 19.5\n1.0, 895, 14.0, 13.0\n2.0, 792, 7.0, 5.0\n4.0, 612, -7.0, -12.0';
+const impRes = Amod.importRadiosonde(customSondeTxt, { assimilate: true });
+ok(impRes.ok && impRes.count === 4 && Math.abs(Amod.STATE.surfaceTemp - 21.0) < 1e-6 && Amod.STATE.surfacePressure === 1008,
+  'Atmosphere.importRadiosonde 成功解析自定义探空并将地面温压湿与直减率同化到场景',
+  `T0=${Amod.STATE.surfaceTemp}, P0=${Amod.STATE.surfacePressure}, Γ=${Amod.STATE.lapseRate}`);
+Amod.resetRadiosonde();
+ok(Amod.getRadiosonde().data.length === Amod.RADIOSONDE_SAMPLE.data.length, 'Atmosphere.resetRadiosonde 恢复默认探空样本');
+
+win.Help.applyScenario('cloudlab');
+ok(Amod.STATE.seeding.on === true && Amod.STATE.micro.scheme === 'sb06', 'Help.applyScenario(cloudlab) 一键激活 CLOUDLAB 播云与 SB06 方案');
+win.Help.applyScenario('fog');
+ok(Amod.STATE.seeding.on === false, '切换至其他场景预设 (fog) 时自动清除残留播云状态 seeding.on=false');
+
+const wvd = win.Physics.worstVisibilityDetailed(0);
+ok(wvd && isFinite(wvd.vis) && typeof wvd.x === 'number' && typeof wvd.y === 'number',
+  'Physics.worstVisibilityDetailed 采用水平代表网格扫描并返回最差点坐标 (x, y)');
+Amod.deserialize(snapBefore9);
+
 // ================= 汇总 =================
 console.log('\n========================================');
 console.log('结果：' + pass + ' 通过 / ' + fail + ' 失败');

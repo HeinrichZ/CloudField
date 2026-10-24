@@ -237,10 +237,28 @@
 
     const cover = A.totalCloudCover();
     const cb = layers.find(L => L.type === 4);
-    let precip = 0.03;
-    if (cb) precip = 0.85;
-    else if (S.convection > 60 && S.surfaceRH > 70) precip = 0.35;
-    else if (layers.some(L => L.type <= 2 && L.coverage > 0.7)) precip = 0.25;
+    const tEff = S.surfaceTemp + (S.envT || 0);
+    const rhEff = Math.min(100, Math.max(1, S.surfaceRH + (S.envRH || 0)));
+    let precip = 0.0;
+    if (layers.length > 0) {
+      let basePrecip = 0.03;
+      if (cb) basePrecip = 0.75;
+      else if (S.convection > 60 && rhEff > 70) basePrecip = 0.35;
+      else if (layers.some(L => L.type <= 2 && L.coverage > 0.7)) basePrecip = 0.22;
+      // 耦合当前所选微物理方案（Kessler / KK2000 / ICON-SB06）的自动转化及播云降水率
+      let rainMmH = 0;
+      if (global.Kessler) {
+        const kr = global.Kessler.readout();
+        rainMmH = kr.rainRate || 0;
+        if (rainMmH <= 1e-4 && global.Kessler.ratesForScheme && maxLWC > 0.05) {
+          const qcEst = maxLWC * 1e-3;
+          const r = global.Kessler.ratesForScheme(S.micro.scheme || 'kessler', qcEst, 1e-4, { rho: 1.0 });
+          const pwbf = global.Kessler.wbfRate ? global.Kessler.wbfRate(qcEst, S.sliceAlt || 1.1) : 0;
+          rainMmH = (r.pac + r.pgr + pwbf) * 1200 * 3600;
+        }
+      }
+      precip = Math.min(0.99, basePrecip * 0.65 + Math.min(0.55, rainMmH / 10));
+    }
 
     const card = (label, value, unit, tone) =>
       `<div class="gauge${tone ? ' ' + tone : ''}"><div class="k">${label}</div>` +
@@ -251,9 +269,9 @@
       card(I18N.t('ro.top'), U.alt(top, 2), U.U.alt()) +
       card(I18N.t('ro.lcl'), U.alt(lcl, 2), U.U.alt()) +
       card(I18N.t('ro.zero'), fr ? U.alt(fr, 2) : '—', U.U.alt()) +
-      card(I18N.t('ro.surfTemp'), U.temp(S.surfaceTemp, 1), U.U.temp(), gaugeTone('temp', S.surfaceTemp)) +
+      card(I18N.t('ro.surfTemp'), U.temp(tEff, 1), U.U.temp(), gaugeTone('temp', tEff)) +
       card(I18N.t('ro.surfPres'), U.pres(S.surfacePressure, 0), U.U.pres()) +
-      card(I18N.t('ro.surfRH'), S.surfaceRH.toFixed(0), '%RH', S.surfaceRH > 90 ? 'warn' : '') +
+      card(I18N.t('ro.surfRH'), rhEff.toFixed(0), '%RH', rhEff > 90 ? 'warn' : '') +
       card(I18N.t('ro.maxLWC'), maxLWC.toFixed(2), 'g/m³', gaugeTone('lwc', maxLWC)) +
       card(I18N.t('ro.cover'), cover.toFixed(0), '%', cover > 80 ? 'bad' : cover > 50 ? 'warn' : '') +
       card(I18N.t('ro.precip'), (precip * 100).toFixed(0), '%', precip > 0.5 ? 'warn' : '') +
@@ -481,6 +499,7 @@
       `${S.viewMode},${S.tintField},${S.micro.effRadiusUm},${S.micro.dropConc},${S.micro.reMode},${S.micro.scheme},${S.micro.iceFrac},${S.micro.autoPhaseTemp ? 1 : 0},` +
       `${sp.type},${sp.re},${sp.N},${sp.veff},${sp.rg},${sp.sigmaG},${sp.measured ? sp.measured.length : 0},` +
       `${ph.water},${ph.ice},${ph.snow},${ph.graupel},${ph.hail},${ae.on ? 1 : 0},${ae.beta0},${ae.scaleH},` +
+      `${S.kessler ? (S.kessler.rainRate || 0).toFixed(2) : 0},` +
       `${sd.on ? 1 : 0},${sd.agent},${sd.inpConc},${sd.glaciationEff},${sd.alt},${sd.x0},${sd.z0},${sd.width},${sd.diffK},${life}|${lSig}`;
   }
   function update(timeSec) {

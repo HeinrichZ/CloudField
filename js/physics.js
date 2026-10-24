@@ -26,7 +26,7 @@
     return 1.0;
   }
 
-  // 相态质量分数：支持 Korolev (0 ~ -38°C) 温度自适应混合相分配、WBF 播云羽流冰晶化增幅，并打通 micro.iceFrac 与 phases
+  // 相态质量分数：支持 Korolev (0 ~ -38°C) 温度自适应混合相分配、同质冻结物理硬约束（T ≤ -38°C 无液态水）、WBF 播云羽流冰晶化增幅
   function phaseFractions(z, x, y) {
     let base;
     if (S.micro && S.micro.autoPhaseTemp && z != null && A.iceFractionAt) {
@@ -39,6 +39,22 @@
       else {
         base = {};
         PHASE_ORDER.forEach(k => { base[k] = Math.max(0, p[k] || 0) / sum; });
+      }
+      // 大气物理同质冻结硬约束：T ≤ -38°C 时过冷液态水滴无法存在，且高空冷云 (-22 ~ -38°C) 若未手动指定冰相则按温度自然冰化
+      if (z != null && A.tempAt && base.water > 0) {
+        const T = A.tempAt(z);
+        if (T <= -38) {
+          const w = base.water;
+          base.water = 0;
+          base.ice = (base.ice || 0) + w * 0.85;
+          base.snow = (base.snow || 0) + w * 0.15;
+        } else if (T < -22 && base.water > 0.98) {
+          const fiHigh = Math.min(1, Math.pow((-T - 22) / 16, 1.2));
+          const shiftH = base.water * fiHigh;
+          base.water -= shiftH;
+          base.ice = (base.ice || 0) + shiftH * 0.85;
+          base.snow = (base.snow || 0) + shiftH * 0.15;
+        }
       }
     }
     // 叠加 ETH CLOUDLAB 人工播云羽流内部的 WBF 冰晶转化（近源端残余水凝物以新生冰晶/雪晶为主）
@@ -111,13 +127,36 @@
     return { vis, beta: d.betaExt, sca: d.betaSca, abs: d.betaAbs, lwc: d.lwc, re: d.reUm, veff: d.veff, frac: d.frac, seedDepletion: d.seedDepletion };
   }
 
+  const WORST_OFFS = [[0, 0], [-12, -12], [-12, 0], [-12, 12], [0, -12], [0, 12], [12, -12], [12, 0], [12, 12]];
   function worstVisibilityDetailed(time) {
-    let worst = Infinity, atZ = 0, info = null;
-    for (let z = 0; z <= 13; z += 0.25) {
-      const v = visibilityDetailed(0, 0, z, time);
-      if (isFinite(v.vis) && v.vis < worst) { worst = v.vis; atZ = z; info = v; }
+    const layers = A.effectiveLayers();
+    const wind = { x: S.windSpeed, dir: S.windDir };
+    let worst = Infinity, atZ = 0, bestX = 0, bestY = 0, bestD = null;
+    for (let z = 0; z <= 13; z += 0.5) {
+      for (let k = 0; k < WORST_OFFS.length; k++) {
+        const ox = WORST_OFFS[k][0], oy = WORST_OFFS[k][1];
+        const d = detailedAt(ox, oy, z, layers, wind, time);
+        const vis = A.visibilityFromExt(d.betaExt);
+        if (isFinite(vis) && vis < worst) {
+          worst = vis; atZ = z; bestX = ox; bestY = oy; bestD = d;
+        }
+      }
     }
-    return { vis: worst, alt: atZ, info };
+    // 在最差高度上下 ±0.25 km 做精细加密采样
+    for (const dz of [-0.25, 0.25]) {
+      const zFine = atZ + dz;
+      if (zFine < 0 || zFine > 13) continue;
+      const d = detailedAt(bestX, bestY, zFine, layers, wind, time);
+      const vis = A.visibilityFromExt(d.betaExt);
+      if (isFinite(vis) && vis < worst) {
+        worst = vis; atZ = zFine; bestD = d;
+      }
+    }
+    const info = bestD ? {
+      vis: worst, beta: bestD.betaExt, sca: bestD.betaSca, abs: bestD.betaAbs,
+      lwc: bestD.lwc, re: bestD.reUm, veff: bestD.veff, frac: bestD.frac, seedDepletion: bestD.seedDepletion,
+    } : visibilityDetailed(0, 0, 0, time);
+    return { vis: worst, alt: atZ, x: bestX, y: bestY, info };
   }
 
   // ETH CLOUDLAB 人工播云试验诊断：对比播撒羽流轴线内（下风向 3~12 km 代表性云团）与周围未播撒环境云体的能见度及跑道起降标准恢复情况

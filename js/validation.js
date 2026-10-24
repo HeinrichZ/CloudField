@@ -51,8 +51,8 @@
     return Math.min(10000, Math.round(2500 + 7500 * Math.min(1, (100 - rh) / 35)));
   }
 
-  function fromRadiosonde() {
-    const src = A.RADIOSONDE_SAMPLE;
+  function fromRadiosonde(sonde) {
+    const src = sonde || (A.getRadiosonde ? A.getRadiosonde() : A.RADIOSONDE_SAMPLE);
     const layers = A.effectiveLayers();
     const wind = { x: A.STATE.windSpeed, dir: A.STATE.windDir };
     const hasDetailed = !!(global.Physics && typeof global.Physics.detailedAt === 'function');

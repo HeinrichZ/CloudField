@@ -462,7 +462,7 @@
     return true;
   }
 
-  // ============ 探空验证（最小真实验证）============
+  // ============ 探空验证（支持导入自定义实测探空与场景同化）============
   const RADIOSONDE_SAMPLE = {
     station: '示例站 (representative sample)',
     note: '示意数据，非实测；请用导入功能载入真实 radiosonde',
@@ -474,8 +474,48 @@
       [10.0, 264, -46.0, -54.0], [12.0, 194, -58.0, -67.0],
     ],
   };
+  let activeRadiosonde = RADIOSONDE_SAMPLE;
+  function getRadiosonde() { return activeRadiosonde || RADIOSONDE_SAMPLE; }
+  function resetRadiosonde() { activeRadiosonde = RADIOSONDE_SAMPLE; return activeRadiosonde; }
+  // 解析并导入自定义探空文本（每行: z(km 或 m), p(hPa), T(°C), Td(°C)），可选将温湿压与直减率同化到当前场景
+  function importRadiosonde(text, opts) {
+    opts = opts || {};
+    const lines = String(text || '').split(/\r?\n/);
+    const rows = [];
+    for (let ln of lines) {
+      ln = ln.trim();
+      if (!ln || ln[0] === '#') continue;
+      const v = ln.split(/[\s,;]+/).map(Number);
+      if (v.length >= 4 && isFinite(v[0]) && isFinite(v[1]) && isFinite(v[2]) && isFinite(v[3])) {
+        rows.push([v[0], v[1], v[2], v[3]]);
+      }
+    }
+    if (rows.length < 3) return { ok: false, msg: '探空数据至少需要 3 个有效高度层 (z, p, T, Td)' };
+    // 若最大高度 > 50，自动按米 (m) 换算为千米 (km)
+    const maxZ = Math.max.apply(null, rows.map(r => r[0]));
+    if (maxZ > 50) rows.forEach(r => { r[0] = +(r[0] / 1000).toFixed(3); });
+    rows.sort((a, b) => a[0] - b[0]);
+    activeRadiosonde = {
+      station: opts.station || '自定义探空 (Custom Radiosonde)',
+      note: '用户导入实测/自定义探空廓线 (' + rows.length + ' 层)',
+      data: rows,
+    };
+    if (opts.assimilate !== false) {
+      const r0 = rows[0], rTop = rows[rows.length - 1];
+      STATE.surfaceTemp = r0[2];
+      STATE.surfacePressure = r0[1];
+      const a = 17.27, b = 237.7;
+      const rh0 = 100 * Math.exp((a * r0[3]) / (b + r0[3]) - (a * r0[2]) / (b + r0[2]));
+      STATE.surfaceRH = Math.min(100, Math.max(5, Math.round(rh0)));
+      const dz = Math.max(0.5, rTop[0] - r0[0]);
+      STATE.lapseRate = Math.min(11, Math.max(0.5, +((r0[2] - rTop[2]) / dz).toFixed(2)));
+      const td0 = r0[2] - r0[3], tdTop = rTop[2] - rTop[3];
+      STATE.dewLapse = Math.min(4.0, Math.max(0.2, +(STATE.lapseRate - (r0[3] - rTop[3]) / dz).toFixed(2)));
+    }
+    return { ok: true, count: rows.length, sonde: activeRadiosonde };
+  }
   function validateAgainstRadiosonde(sonde) {
-    const src = sonde || RADIOSONDE_SAMPLE;
+    const src = sonde || activeRadiosonde || RADIOSONDE_SAMPLE;
     const layers = effectiveLayers();
     const wind = { x: STATE.windSpeed, dir: STATE.windDir };
     const hasDetailed = !!(global.Physics && typeof global.Physics.detailedAt === 'function');
@@ -524,6 +564,6 @@
     extinctionFromLWC, visibilityFromExt, visibilityAtAltitude, worstVisibility,
     lwcFromDensity, betaFromLWC, effRadiusFromLWC, operativeRe, totalCloudCover,
     microMapping, serialize, deserialize,
-    RADIOSONDE_SAMPLE, validateAgainstRadiosonde, profile,
+    RADIOSONDE_SAMPLE, getRadiosonde, importRadiosonde, resetRadiosonde, validateAgainstRadiosonde, profile,
   };
 })(window);

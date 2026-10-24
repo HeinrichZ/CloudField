@@ -85,26 +85,41 @@
     return Math.pow(tb4, 0.25);
   }
 
-  // 激光雷达：体后向散射 β' = βSca · 后向散射相函数(≈0.03 sr⁻¹，水云)，并反映播云冰晶退偏/色比跃升
+  // 激光雷达：考虑双程 Beer-Lambert 消光衰减 exp(-2τ(z)) 与水云/冰云激光雷达比 S (Lidar Ratio: 水云 ~18.8 sr, 冰晶 ~28 sr)
+  // 及非球形冰晶线性退偏比 δ / 色比跃升
   function lidar(time) {
-    let betaSca = 0, fracIce = 0, fracWater = 0;
+    const S_LIQ = 18.8, S_ICE = 28.0;
+    let attBackSum = 0, unattBackSum = 0, betaScaSum = 0, fracIceSum = 0, fracWaterSum = 0;
     const layers = A.effectiveLayers(), wind = { x: S.windSpeed, dir: S.windDir };
     const nPts = SAMPLE_PTS.length;
+    const dzM = 250;
     for (let p = 0; p < nPts; p++) {
       const sx = SAMPLE_PTS[p][0], sy = SAMPLE_PTS[p][1];
+      let tauCum = 0;
       for (let z = 0; z <= 14; z += 0.25) {
         const d = P.detailedAt(sx, sy, z, layers, wind, time || 0);
-        betaSca += d.betaSca * 250;
-        const fi = d.frac ? ((d.frac.ice || 0) + (d.frac.snow || 0)) : 0;
-        fracIce += fi * d.betaSca * 250;
-        fracWater += (d.frac ? d.frac.water : 0) * d.betaSca * 250;
+        const fi = d.frac ? Math.min(1, (d.frac.ice || 0) + (d.frac.snow || 0) + (d.frac.graupel || 0) + (d.frac.hail || 0)) : 0;
+        const fw = Math.max(0, 1 - fi);
+        const invS = fw / S_LIQ + fi / S_ICE;
+        const bBackLocal = d.betaSca * invS;          // m⁻¹·sr⁻¹
+        const dTau = d.betaExt * dzM;
+        const twoWayTrans = Math.exp(-2 * tauCum);
+        const layerInt = dTau > 1e-5 ? ((1 - Math.exp(-2 * dTau)) / (2 * d.betaExt)) : dzM;
+        attBackSum += bBackLocal * twoWayTrans * layerInt;
+        unattBackSum += bBackLocal * dzM;
+        betaScaSum += d.betaSca * dzM;
+        fracIceSum += fi * d.betaSca * dzM;
+        fracWaterSum += fw * d.betaSca * dzM;
+        tauCum += dTau;
       }
     }
-    betaSca /= nPts; fracIce /= nPts; fracWater /= nPts;
-    const ratio = (fracIce + fracWater) > 0 ? fracIce / (fracIce + fracWater) : 0;
-    const betaBack = betaSca * 0.03;                 // m⁻¹·sr⁻¹
-    const colorRatio = 1.0 + 1.2 * ratio;            // 冰相退偏/色比 > 1
-    return { betaBack, colorRatio, tau: betaSca, iceRatio: ratio };
+    const betaBack = attBackSum / nPts;               // 含双程衰减的积分后向散射 (sr⁻¹)
+    const betaBackUnatten = unattBackSum / nPts;
+    const betaSca = betaScaSum / nPts;
+    const ratio = (fracIceSum + fracWaterSum) > 0 ? fracIceSum / (fracIceSum + fracWaterSum) : 0;
+    const depolRatio = 0.03 + 0.39 * ratio;           // 线性退偏比 δ：水云 ~0.03，冰晶 ~0.42
+    const colorRatio = 1.0 + 1.2 * ratio;             // 冰相退偏/色比 > 1
+    return { betaBack, betaBackUnatten, colorRatio, depolRatio, tau: betaSca, iceRatio: ratio };
   }
 
   // 气象雷达反射率（dBZ）：同时耦合（1）云滴/冰晶粒子谱有效方差 ν_eff 的六阶矩放大效应，

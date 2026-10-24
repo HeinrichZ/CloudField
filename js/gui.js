@@ -622,14 +622,21 @@
   function buildExportPane(root) {
     root.innerHTML = '<h3>' + I18N.t('ex.title') + '</h3>';
     const ta = document.createElement('textarea'); ta.id = 'ex-out'; ta.rows = 10; ta.readOnly = true; root.appendChild(ta);
+    let curFile = 'CloudField.metar.txt';
     const row = document.createElement('div'); row.className = 'btn-row wrap';
-    row.appendChild(btn(I18N.t('ex.metar'), () => ta.value = global.Exporter.toMETAR()));
-    row.appendChild(btn(I18N.t('ex.iwxxm'), () => ta.value = global.Exporter.toIWXXM()));
-    row.appendChild(btn(I18N.t('ex.bufr'), () => ta.value = JSON.stringify(global.Exporter.toBUFR(), null, 2)));
-    row.appendChild(btn(I18N.t('ex.grib'), () => ta.value = JSON.stringify(global.Exporter.toGRIB(), null, 2)));
-    row.appendChild(btn(I18N.t('ex.icon'), () => ta.value = global.Exporter.toICONNamelist()));
-    row.appendChild(btn(I18N.t('ex.yaml'), () => ta.value = global.Exporter.toExperimentYAML()));
+    row.appendChild(btn(I18N.t('ex.metar'), () => { curFile = 'CloudField.metar.txt'; ta.value = global.Exporter.toMETAR(); }));
+    row.appendChild(btn(I18N.t('ex.iwxxm'), () => { curFile = 'CloudField.iwxxm.xml'; ta.value = global.Exporter.toIWXXM(); }));
+    row.appendChild(btn(I18N.t('ex.bufr'), () => { curFile = 'CloudField.bufr.json'; ta.value = JSON.stringify(global.Exporter.toBUFR(), null, 2); }));
+    row.appendChild(btn(I18N.t('ex.grib'), () => { curFile = 'CloudField.grib.json'; ta.value = JSON.stringify(global.Exporter.toGRIB(), null, 2); }));
+    row.appendChild(btn(I18N.t('ex.icon'), () => { curFile = 'icon_microphysics.nml'; ta.value = global.Exporter.toICONNamelist(); }));
+    row.appendChild(btn(I18N.t('ex.yaml'), () => { curFile = 'cloudlab_experiment.yaml'; ta.value = global.Exporter.toExperimentYAML(); }));
     row.appendChild(btn(I18N.t('ex.copy'), () => { if (navigator.clipboard) navigator.clipboard.writeText(ta.value); }));
+    row.appendChild(btn('⬇ ' + I18N.t('tb.export'), () => {
+      if (!ta.value) { curFile = 'icon_microphysics.nml'; ta.value = global.Exporter.toICONNamelist(); }
+      const blob = new Blob([ta.value], { type: 'text/plain;charset=utf-8' });
+      const u = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = u; a.download = curFile; a.click(); URL.revokeObjectURL(u);
+    }));
     root.appendChild(row);
     const ep = document.createElement('input'); ep.placeholder = I18N.t('ex.endpoint'); ep.style.width = '70%'; root.appendChild(ep);
     root.appendChild(btn(I18N.t('ex.push'), () => {
@@ -640,8 +647,21 @@
 
   function buildValidationPane(root) {
     root.innerHTML = '<h3>' + I18N.t('val2.title') + '</h3>';
+    const ta = document.createElement('textarea'); ta.id = 'val-sonde-text'; ta.rows = 4;
+    ta.placeholder = 'z(km), p(hPa), T(°C), Td(°C)\n0.0, 1013, 14.0, 12.5\n1.0, 898, 7.5, 6.8\n2.0, 795, 1.0, -0.2\n4.0, 616, -11.0, -15.0';
+    root.appendChild(ta);
     const row = document.createElement('div'); row.className = 'btn-row wrap';
-    row.appendChild(btn(I18N.t('val2.run'), () => runVal())); root.appendChild(row);
+    row.appendChild(btn(I18N.t('val2.run'), () => runVal()));
+    row.appendChild(btn(I18N.t('tb.import'), () => {
+      if (!ta.value.trim()) return;
+      const res = A.importRadiosonde(ta.value, { assimilate: true });
+      if (!res.ok) { alert(res.msg); return; }
+      refreshAll(); notifyChange(); runVal();
+    }));
+    row.appendChild(btn('↺ ' + I18N.t('ts.default'), () => {
+      A.resetRadiosonde(); ta.value = ''; runVal();
+    }));
+    root.appendChild(row);
     const stats = document.createElement('div'); stats.id = 'val-stats'; stats.className = 'stat-cards'; root.appendChild(stats);
     const cv1 = document.createElement('canvas'); cv1.id = 'val-scatter'; cv1.width = 200; cv1.height = 200; cv1.className = 'adv-canvas'; root.appendChild(cv1);
     const cv2 = document.createElement('canvas'); cv2.id = 'val-taylor'; cv2.width = 200; cv2.height = 200; cv2.className = 'adv-canvas'; root.appendChild(cv2);
@@ -697,7 +717,14 @@
   function buildScenariosPane(root) {
     root.innerHTML = '<h3>' + I18N.t('help.scenario') + '</h3>';
     const row = document.createElement('div'); row.className = 'btn-row wrap';
-    [['fog', I18N.t('help.fog')], ['stratus', I18N.t('help.stratus')], ['cumulus', I18N.t('help.cumulus')], ['cirrus', I18N.t('help.cirrus')]].forEach(([k, lbl]) => {
+    [
+      ['fog', I18N.t('help.fog')],
+      ['stratus', I18N.t('help.stratus')],
+      ['cumulus', I18N.t('help.cumulus')],
+      ['cirrus', I18N.t('help.cirrus')],
+      ['cloudlab', 'CLOUDLAB Seeding'],
+      ['cbstorm', 'Cb Storm'],
+    ].forEach(([k, lbl]) => {
       row.appendChild(btn(lbl, () => { if (global.Help) global.Help.applyScenario(k); refreshAll(); }));
     });
     root.appendChild(row);

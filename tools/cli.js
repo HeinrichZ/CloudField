@@ -41,7 +41,7 @@ const Batch = sandbox.window.Batch;
 const A = sandbox.window.Atmosphere;
 
 function parseArgs(argv) {
-  const o = { stations: null, times: [0], format: 'csv', out: null };
+  const o = { stations: null, times: [0], format: 'csv', out: null, scheme: null, dropConc: null, seedInp: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--stations') o.stations = argv[++i];
@@ -50,12 +50,35 @@ function parseArgs(argv) {
     else if (a === '--out') o.out = argv[++i];
     else if (a === '--steps') o.steps = argv[++i];       // 时序文件（时序 CSV）
     else if (a === '--preset') o.preset = argv[++i];
+    else if (a === '--scheme') o.scheme = argv[++i];     // kessler | kk2000 | sb06
+    else if (a === '--dropConc') o.dropConc = Number(argv[++i]);
+    else if (a === '--seed-inp') o.seedInp = Number(argv[++i]);
   }
   return o;
 }
 
 function main() {
   const o = parseArgs(process.argv.slice(2));
+  if (o.scheme && A.STATE.micro) A.STATE.micro.scheme = o.scheme;
+  if (o.dropConc != null && isFinite(o.dropConc) && A.STATE.micro) A.STATE.micro.dropConc = o.dropConc;
+  if (o.seedInp != null && isFinite(o.seedInp) && A.STATE.seeding) {
+    A.STATE.seeding.on = o.seedInp > 0;
+    A.STATE.seeding.inpConc = o.seedInp;
+  }
+  const Exporter = sandbox.window.Exporter;
+  if (o.format === 'nml' || o.format === 'yaml' || o.format === 'metar' || o.format === 'iwxxm') {
+    const text = o.format === 'nml' ? Exporter.toICONNamelist()
+      : o.format === 'yaml' ? Exporter.toExperimentYAML()
+      : o.format === 'metar' ? Exporter.toMETAR()
+      : Exporter.toIWXXM();
+    if (o.out) {
+      fs.writeFileSync(o.out, text);
+      console.log('已写出 ' + o.format.toUpperCase() + ' -> ' + o.out);
+    } else {
+      console.log(text);
+    }
+    return;
+  }
   let stations = [{ name: 'default', patch: null }];
   if (o.stations) {
     stations = JSON.parse(fs.readFileSync(o.stations, 'utf8'));
