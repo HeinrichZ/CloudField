@@ -96,6 +96,7 @@
   }
 
   float layerDensity(vec3 p, int i){
+    if(uCovDen[i].y < 0.001) return 0.0;
     float base = uBaseTop[i].x, top = uBaseTop[i].y;
     if(p.y < base || p.y > top) return 0.0;
     float h = (p.y - base) / max(0.001, top - base);
@@ -141,7 +142,9 @@
     float d = 0.0; float ls = 0.7;
     for(int i=0;i<6;i++){
       vec3 sp = p + uSunDir * ls * (float(i) + 0.5);
+      if(sp.y < 0.0 || sp.y > uMaxAlt) break;
       d += totalDensity(sp) * ls;
+      if(d > 3.2) break;
     }
     return exp(-d * 1.1);
   }

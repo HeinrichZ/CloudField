@@ -774,6 +774,20 @@ ok(recCap && recCap.seeding && typeof recCap.seeding.inpConc === 'number', 'Reco
 const repHtml = win.Report.generateHTML();
 ok(/CLOUDLAB/.test(repHtml) && /三方案雨强/.test(repHtml), 'Report.generateHTML 包含三方案雨强对比与 CLOUDLAB 播云诊断');
 
+// 7) 水平切片坐标轴修复与公式 Tab 动态方案联动验证
+const svSliceAlt = Amod.STATE.sliceAlt, svScOn2 = Amod.STATE.layers.sc.on, svScBase2 = Amod.STATE.layers.sc.base, svScTop2 = Amod.STATE.layers.sc.top;
+Amod.STATE.layers.sc.on = true; Amod.STATE.layers.sc.base = 0.4; Amod.STATE.layers.sc.top = 1.8; Amod.STATE.layers.sc.coverage = 0.9; Amod.STATE.layers.sc.density = 0.85;
+Amod.STATE.sliceAlt = 1.0;
+const fNorth = Amod.sampleFields(0, -10, 1.0, Amod.effectiveLayers(), { x: 8, dir: 270 }, 0);
+const fSouth = Amod.sampleFields(0, 10, 1.0, Amod.effectiveLayers(), { x: 8, dir: 270 }, 0);
+ok(fNorth.lwc > 0 || fSouth.lwc > 0, '水平切片 (x, y, alt) 在南北半区 (y<0 与 y>0) 均按 sliceAlt 正确采样云水',
+  `y=-10: ${fNorth.lwc.toFixed(3)}, y=+10: ${fSouth.lwc.toFixed(3)}`);
+Amod.STATE.sliceAlt = svSliceAlt; Amod.STATE.layers.sc.on = svScOn2; Amod.STATE.layers.sc.base = svScBase2; Amod.STATE.layers.sc.top = svScTop2;
+
+const sondeRows = Amod.validateAgainstRadiosonde();
+ok(sondeRows.length > 0 && sondeRows.every(r => typeof r.obsVis === 'number' && r.obsVis > 0),
+  'validateAgainstRadiosonde 返回逐层探空观测参考能见度 obsVis');
+
 // ================= 汇总 =================
 console.log('\n========================================');
 console.log('结果：' + pass + ' 通过 / ' + fail + ' 失败');

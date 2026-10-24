@@ -236,14 +236,18 @@
         const grow = 1 + conv * (k === 'cb' ? 2.6 : 1.2) * life;
         top = Math.min(15, L.base + (L.top - L.base) * grow);
       }
-      base = Math.max(0, L.base);
+      const effBase = Math.max(0, L.base);
+      const effScale = Math.max(0.02, L.scale);
       const lifeMod = 0.78 + 0.30 * life;
       const densMod = 0.85 + 0.25 * life;
       return {
-        key: k, base, top,
+        key: k, base: effBase, top,
         coverage: Math.min(1, L.coverage * lifeMod),
         density: Math.min(1, L.density * densMod),
         scale: L.scale, detail: L.detail,
+        invThick: 1 / Math.max(0.05, top - effBase),
+        invScale: 1 / effScale,
+        keyOffset: k.length * 13.0,
         kind: CLOUD_META[k].kind,
         type: LAYER_ORDER.indexOf(k),
       };
@@ -264,18 +268,27 @@
     return f;
   }
   function sampleFields(x, y, z, layers, wind, time) {
-    const wx = Math.sin((wind.dir || 0) * Math.PI / 180) * (wind.x || 0) * WIND_SCALE;
-    const wz = Math.cos((wind.dir || 0) * Math.PI / 180) * (wind.x || 0) * WIND_SCALE;
-    const px = x - wx * time, pz = z - wz * time;
+    const wDir = (wind && wind.dir) || 0;
+    const wSpd = (wind && wind.x) || 0;
+    const rad = wDir * 0.017453292519943295;
+    const wx = Math.sin(rad) * wSpd * WIND_SCALE;
+    const wz = Math.cos(rad) * wSpd * WIND_SCALE;
+    const t = time || 0;
+    const px = x - wx * t, py = y - wz * t;
     let density = 0, lwc = 0;
-    for (const L of layers) {
+    for (let i = 0; i < layers.length; i++) {
+      const L = layers[i];
       if (z < L.base || z > L.top) continue;
-      const h = (z - L.base) / Math.max(0.05, L.top - L.base);
-      const vfall = Math.exp(-Math.pow((h - 0.5) * 2.4, 2) * 1.6);
+      const invThick = L.invThick || (1 / Math.max(0.05, L.top - L.base));
+      const invScale = L.invScale || (1 / Math.max(0.02, L.scale));
+      const keyOff = L.keyOffset != null ? L.keyOffset : (L.key.length * 13.0);
+      const h = (z - L.base) * invThick;
+      const hd = (h - 0.5) * 2.4;
+      const vfall = Math.exp(-hd * hd * 1.6);
       const cov = L.coverage;
-      const sx = px / Math.max(0.02, L.scale) + L.key.length * 13.0;
-      const sy = y / Math.max(0.02, L.scale) * 0.6;
-      const sz = pz / Math.max(0.02, L.scale);
+      const sx = px * invScale + keyOff;
+      const sy = py * invScale * 0.6;
+      const sz = z * invScale;
       const n = fbm(sx, sy, sz);
       const n2 = fbm(sx * 2.1 + 5.0, sy * 2.1, sz * 2.1) * L.detail;
       let d = (0.5 + n + n2 * 0.5);
@@ -283,17 +296,17 @@
       d *= vfall * L.density;
       if (d > 0) {
         density += d;
-        const lwcLayer = Math.min(1, d) * LWC_MAX * (L.kind === 'ice' ? 0.4 : 1.0);
-        lwc = Math.max(lwc, lwcLayer);
+        const lwcLayer = (d < 1 ? d : 1) * LWC_MAX * (L.kind === 'ice' ? 0.4 : 1.0);
+        if (lwcLayer > lwc) lwc = lwcLayer;
       }
     }
     // 叠加 ETH CLOUDLAB 人工播云 WBF 冰化消散沟减消光效应
-    const seedDep = seedingDepletionAt(x, y, z);
+    const seedDep = (STATE.seeding && STATE.seeding.on) ? seedingDepletionAt(x, y, z) : 0;
     if (seedDep > 0) {
       density *= (1 - seedDep);
       lwc *= (1 - seedDep);
     }
-    density = Math.min(1.5, density);
+    if (density > 1.5) density = 1.5;
     return { density, lwc, seedDepletion: seedDep, temp: tempAt(z), dew: dewAt(z), pressure: pressureAt(z) };
   }
 
@@ -449,7 +462,16 @@
       const f = sampleFields(0, 0, z, layers, wind, 0);
       const beta = extinctionFromLWC(f.lwc, operativeRe(f.lwc));
       const vis = visibilityFromExt(beta);
-      return { z, p, T, Td, modelVis: isFinite(vis) ? vis : null, lwc: f.lwc, beta };
+      const dtd = Math.max(0, T - Td);
+      const rh = 100 * Math.exp((17.27 * Td) / (237.7 + Td) - (17.27 * T) / (237.7 + T));
+      let obsVis;
+      if (dtd <= 4.0) {
+        const lwcObs = Math.max(0.01, 0.42 * Math.exp(-dtd / 1.45) * Math.exp(-Math.max(0, z - 1.2) / 4.5));
+        obsVis = Math.min(10000, Math.max(80, visibilityFromExt(extinctionFromLWC(lwcObs, 9.5))));
+      } else {
+        obsVis = Math.min(10000, Math.round(2500 + 7500 * Math.min(1, (100 - rh) / 35)));
+      }
+      return { z, p, T, Td, obsVis, modelVis: isFinite(vis) ? vis : null, lwc: f.lwc, beta };
     });
   }
 

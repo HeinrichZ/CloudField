@@ -33,14 +33,14 @@
     return { od, omegaMix, gMix };
   }
 
-  function columnOpticalDepth(time) {
-    return columnStats(time).od;
+  function columnOpticalDepth(time, csCached) {
+    return (csCached || columnStats(time)).od;
   }
 
   // 辐照度：双流近似（晴空 + 云，动态传入相态加权的 ω_mix 与 g_mix）
-  function irradiance(time) {
+  function irradiance(time, csCached) {
     const cosZ = Math.max(0.05, Math.sin((S.sunElev || 35) * Math.PI / 180));
-    const cs = columnStats(time);
+    const cs = csCached || columnStats(time);
     const tau = cs.od;
     if (global.Radiation) {
       const T = global.Radiation.transmittance(tau, cosZ, cs.omegaMix, cs.gMix);
@@ -56,8 +56,8 @@
   }
 
   // 云反照率：双流查表（接入相态加权 ω_mix 与 g_mix）；未加载 Radiation 时退回 Cahalan 近似
-  function cloudAlbedo(time) {
-    const cs = columnStats(time);
+  function cloudAlbedo(time, csCached) {
+    const cs = csCached || columnStats(time);
     const tau = cs.od;
     if (global.Radiation) {
       const cosZ = Math.max(0.05, Math.sin((S.sunElev || 35) * Math.PI / 180));
@@ -70,8 +70,8 @@
   // 卫星红外窗区（10.8 µm）等效黑体亮温 T_b：
   // 依据红外辐射传输方程，红外吸收光学厚度 τ_IR ≈ 0.48 · τ_vis，云体红外发射率 ε_c = 1 − exp(−τ_IR)，
   // 向上长波辐射通量按 Stefan-Boltzmann 四次方定律合成：T_b = [ε_c · T_top^4 + (1 − ε_c) · T_sfc^4]^(1/4)
-  function satelliteTb(time) {
-    const tau = columnOpticalDepth(time);
+  function satelliteTb(time, csCached) {
+    const tau = (csCached || columnStats(time)).od;
     const Tsfc = Math.max(180, 273.15 + S.surfaceTemp + (S.envT || 0));
     if (tau < 0.005) {
       return Tsfc;
@@ -157,7 +157,9 @@
     const all = !!opts.all;
     const on = S.operators || {};
     const pick = k => all || on[k] !== false;
-    const out = { opticalDepth: columnOpticalDepth(time) };
+    // 单次计算 columnStats 并复用于 opticalDepth / irradiance / albedo / satelliteTb，省去 3 次重复的 5×57 层积分
+    const cs = columnStats(time);
+    const out = { opticalDepth: cs.od };
     let w = null;
     const needW = pick('visibility') || pick('extSplit');
     if (needW && global.Physics) w = global.Physics.worstVisibilityDetailed(time || 0);
@@ -166,9 +168,9 @@
       const i = w.info;
       out.extSplit = { sca: i.sca, abs: i.abs, ratio: i.beta > 0 ? i.abs / i.beta : 0 };
     }
-    if (pick('irradiance')) out.irradiance = irradiance(time);
-    if (pick('albedo')) out.albedo = cloudAlbedo(time);
-    if (pick('satellite')) out.satelliteTb = satelliteTb(time);
+    if (pick('irradiance')) out.irradiance = irradiance(time, cs);
+    if (pick('albedo')) out.albedo = cloudAlbedo(time, cs);
+    if (pick('satellite')) out.satelliteTb = satelliteTb(time, cs);
     if (pick('lidar')) out.lidar = lidar(time);
     if (pick('radar')) out.radar = radar(time);
     return out;

@@ -264,7 +264,8 @@
       <table><thead><tr><th>${I18N.t('val.th.z')}</th><th>${I18N.t('val.th.p')}</th><th>${I18N.t('val.th.T')}</th><th>${I18N.t('val.th.Td')}</th><th>${I18N.t('val.th.vis')}</th><th>${I18N.t('val.th.lwc')}</th></tr></thead><tbody>`;
     rows.forEach(r => {
       const vis = r.modelVis == null ? clear : (r.modelVis >= 1000 ? (r.modelVis / 1000).toFixed(2) + 'km' : r.modelVis.toFixed(0) + 'm');
-      html += `<tr><td>${r.z.toFixed(1)}</td><td>${r.p.toFixed(0)}</td><td>${r.T.toFixed(1)}</td><td>${r.Td.toFixed(1)}</td><td>${vis}</td><td>${r.lwc.toFixed(2)}</td></tr>`;
+      const oVis = r.obsVis == null ? '—' : (r.obsVis >= 1000 ? (r.obsVis / 1000).toFixed(2) + 'km' : r.obsVis.toFixed(0) + 'm');
+      html += `<tr><td>${r.z.toFixed(1)}</td><td>${r.p.toFixed(0)}</td><td>${r.T.toFixed(1)}</td><td>${r.Td.toFixed(1)}</td><td>${vis} <small style="opacity:.7">(${oVis})</small></td><td>${r.lwc.toFixed(2)}</td></tr>`;
     });
     html += `</tbody></table>
       <p class="warn">${I18N.t('val.note')}</p>`;

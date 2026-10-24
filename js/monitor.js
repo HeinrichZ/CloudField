@@ -15,7 +15,8 @@
   const MAX = A.MAX_ALT;
 
   let els = {};
-  let offscreen, offCtx;
+  let offscreen, offCtx, secImgData, sharedOff, sharedOffCtx;
+  let lastProfSig = '', lastReadoutSig = '', lastLegendSig = '', lastSecSig = '';
   const SEC_N = 64;   // 剖面 64×64（原 96×96：每帧 9216 次 fbm 采样，是主循环最大开销）
 
   const HIST_N = 240;
@@ -55,6 +56,9 @@
     offscreen = document.createElement('canvas');
     offscreen.width = SEC_N; offscreen.height = SEC_N;
     offCtx = offscreen.getContext('2d');
+    secImgData = offCtx.createImageData(SEC_N, SEC_N);
+    sharedOff = document.createElement('canvas');
+    sharedOffCtx = sharedOff.getContext('2d');
 
     if (els.dashToggle) {
       els.dashToggle.addEventListener('click', () => {
@@ -75,8 +79,8 @@
       });
     }
 
-    I18N.onLangChange(() => { syncToggleText(); syncTabLabels(); });
-    U.onChange(() => { syncToggleText(); });
+    I18N.onLangChange(() => { lastProfSig = ''; lastReadoutSig = ''; lastLegendSig = ''; syncToggleText(); syncTabLabels(); });
+    U.onChange(() => { lastProfSig = ''; lastReadoutSig = ''; lastLegendSig = ''; syncToggleText(); });
   }
   function syncToggleText() {
     const body = document.getElementById('dash-body');
@@ -187,19 +191,18 @@
     const S = A.STATE;
     const alt = S.sliceAlt;
     const layers = A.effectiveLayers();
-    const dir = (S.windDir + 180) * Math.PI / 180;
-    const sp = S.windSpeed * 0.0009;
-    const wind = { x: Math.sin(dir) * sp, z: Math.cos(dir) * sp };
+    const wind = { x: S.windSpeed, dir: S.windDir };
     const range = 22;
     const field = activeField();
 
-    const img = offCtx.createImageData(SEC_N, SEC_N);
+    const img = secImgData || offCtx.createImageData(SEC_N, SEC_N);
     const d = img.data;
+    const invN = 2 / (SEC_N - 1);
     for (let j = 0; j < SEC_N; j++) {
-      const z = (j / (SEC_N - 1) * 2 - 1) * range;
+      const y = (j * invN - 1) * range;
       for (let i = 0; i < SEC_N; i++) {
-        const x = (i / (SEC_N - 1) * 2 - 1) * range;
-        const f = A.sampleFields(x, alt, z, layers, wind, timeSec);
+        const x = (i * invN - 1) * range;
+        const f = A.sampleFields(x, y, alt, layers, wind, timeSec);
         const c = CM.sample(field.id, fieldValue(f, field.id));
         const idx = (j * SEC_N + i) * 4;
         d[idx] = c[0]; d[idx + 1] = c[1]; d[idx + 2] = c[2]; d[idx + 3] = 255;
@@ -398,14 +401,28 @@
     }
     if (els.dashFormula) {
       const num = (x, d) => Number(x).toFixed(d == null ? 3 : d);
+      const sch = (S.micro && S.micro.scheme) || 'kessler';
+      const schFormula = sch === 'kk2000'
+        ? 'P_ac = 1350·q_c^2.47·N_c^−1.79　(KK2000 2-Mom)'
+        : (sch === 'sb06'
+          ? 'P_ac = (k_c/20x*)·[(ν+2)(ν+4)/(ν+1)²]·ρ·q_c²·x_c²·(1+Φ_au)　(ICON-SB06)'
+          : 'P_ac = k_1·max(0, q_c − q_c0)　(Kessler 1969 1-Mom)');
+      const sdLine = (S.seeding && S.seeding.on)
+        ? `<div class="f-line">P_wbf = q_c·k_INP(N_INP)·f(T)·g(z)　[CLOUDLAB 播云]</div>` +
+          `<div class="f-sub">N_INP=${num(S.seeding.inpConc || 80, 0)} L⁻¹，沟槽削减因子=${num((f.seedDepletion || 0) * 100, 1)}%</div>`
+        : '';
       els.dashFormula.innerHTML =
         `<div class="f-title">${I18N.t('dash.formulaTitle')}</div>` +
 
-        `<div class="f-line">β = 3·LWC / (2·ρ_w·r_e)　[m⁻¹]</div>` +
+        `<div class="f-line">β = 3·LWC / (2·ρ_w·r_e) · (Q_ext/2)　[m⁻¹]</div>` +
         `<div class="f-sub">= 3×${num(lwc, 3)} / (2×1000×${num(re, 1)}×10⁻⁶) = ${num(betaM, 5)} m⁻¹ = ${num(betaKm, 2)} km⁻¹</div>` +
 
         `<div class="f-line">V = −ln(ε)/β　[ε=${A.KOSCHMEIER_EPS}]</div>` +
         `<div class="f-sub">= −ln(0.02)/${num(betaM, 5)} = ${fmtVis(wv.vis)}</div>` +
+
+        `<div class="f-line">${schFormula}</div>` +
+        `<div class="f-sub">当前方案 ${sch.toUpperCase()}：R=${kr ? num(kr.rainRate, 2) : '0.00'} mm/h，P_ac=${kr ? kr.lastPac.toExponential(2) : '0'} s⁻¹</div>` +
+        sdLine +
 
         `<div class="f-line">LWC = min(1,d)·LWC_MAX·(冰相×0.4)　[g/m³]</div>` +
         `<div class="f-sub">LWC_MAX=${A.LWC_MAX}，当前 ${num(lwc, 3)} g/m³（最差能见度高度 ${U.alt(shownAlt, 2)} ${U.U.alt()}）</div>` +
@@ -441,14 +458,42 @@
   function clearSnapshots() { snapshots = []; }
 
   let lastSectionT = -1;
+  function stateSig() {
+    const S = A.STATE;
+    const lSig = A.LAYER_ORDER.map(k => {
+      const L = S.layers[k];
+      return L.on ? `${L.base.toFixed(2)},${L.top.toFixed(2)},${L.coverage.toFixed(2)},${L.density.toFixed(2)},${L.scale.toFixed(2)}` : '0';
+    }).join('|');
+    const life = S.autoLife ? S.lifePhase.toFixed(2) : S.lifeManual.toFixed(2);
+    const sd = S.seeding || {};
+    return `${S.surfaceTemp},${S.surfacePressure},${S.surfaceRH},${S.lapseRate},${S.dewLapse},${S.dryLapseRate},` +
+      `${(S.envT || 0).toFixed(2)},${(S.envRH || 0).toFixed(2)},${S.sliceAlt.toFixed(2)},${S.convection},${S.windSpeed},${S.windDir},` +
+      `${S.viewMode},${S.tintField},${S.micro.effRadiusUm},${S.micro.dropConc},${S.micro.reMode},${S.micro.scheme},` +
+      `${sd.on ? 1 : 0},${sd.agent},${sd.inpConc},${sd.glaciationEff},${life}|${lSig}`;
+  }
   function update(timeSec) {
-    drawProfile();
-    // 剖面图 64×64 采样较重，限制到 ~10 Hz（主视图仍是 60 fps，互不影响）
+    const sig = stateSig();
+    if (sig !== lastProfSig) {
+      drawProfile();
+      lastProfSig = sig;
+    }
+    if (sig !== lastReadoutSig) {
+      readouts();
+      lastReadoutSig = sig;
+    }
+    if (sig !== lastLegendSig) {
+      legend();
+      lastLegendSig = sig;
+    }
+    // 剖面图 64×64 采样较重，限制到 ~10 Hz；若处于暂停态且状态签名未变则跳过重算
     const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-    if (nowMs - lastSectionT > 100) { drawSection(timeSec); lastSectionT = nowMs; }
-    readouts();
+    const secKey = A.STATE.playing ? (sig + '@' + Math.floor((timeSec || 0) * 10)) : sig;
+    if (secKey !== lastSecSig && nowMs - lastSectionT > 100) {
+      drawSection(timeSec);
+      lastSectionT = nowMs;
+      lastSecSig = secKey;
+    }
     simStatus(timeSec);
-    legend();
     updateDashboardReadout(timeSec);
   }
 
@@ -511,9 +556,10 @@
       const c = v == null ? [20, 30, 50] : visColor(v);
       const idx = (j * N + i) * 4; img.data[idx] = c[0]; img.data[idx + 1] = c[1]; img.data[idx + 2] = c[2]; img.data[idx + 3] = 255;
     }
-    // 离屏放大绘制
-    const off = document.createElement('canvas'); off.width = N; off.height = N;
-    off.getContext('2d').putImageData(img, 0, 0);
+    // 复用共享离屏 Canvas 放大绘制，避免频繁创建 DOM 节点
+    const off = sharedOff || document.createElement('canvas');
+    if (off.width !== N || off.height !== N) { off.width = N; off.height = N; }
+    (sharedOffCtx || off.getContext('2d')).putImageData(img, 0, 0);
     ctx.imageSmoothingEnabled = true; ctx.drawImage(off, 0, 0, W, H);
     ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.beginPath();
     ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
@@ -555,8 +601,9 @@
       const idx = (j * N + i) * 4;
       img.data[idx] = col[0]; img.data[idx + 1] = col[1]; img.data[idx + 2] = col[2]; img.data[idx + 3] = 255;
     }
-    const off = document.createElement('canvas'); off.width = N; off.height = N;
-    off.getContext('2d').putImageData(img, 0, 0);
+    const off = sharedOff || document.createElement('canvas');
+    if (off.width !== N || off.height !== N) { off.width = N; off.height = N; }
+    (sharedOffCtx || off.getContext('2d')).putImageData(img, 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(off, PADL, PADT, pw, ph);
 
