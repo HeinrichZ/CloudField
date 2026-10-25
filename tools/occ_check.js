@@ -30,7 +30,7 @@ const occ = new Float32Array(occResult.buf);
 
 // ---- 着色器侧密度（含风的时间偏置与当前生命期）----
 const dir = (S.windDir + 180) * Math.PI / 180;
-const sp = S.windSpeed * 0.0009;
+const sp = S.windSpeed * (A.WIND_SCALE || 0.01);
 const WX = Math.sin(dir) * sp, WZ = Math.cos(dir) * sp;
 function fract(x) { return x - Math.floor(x); }
 function hash3(px, py, pz) {
@@ -65,11 +65,12 @@ function densityAt(px, py, pz, t, layers) {
     const d2 = (h - peak) * 2;
     const vfall = Math.exp(-d2 * d2 * w);
     const sc = L.scale, det = L.detail;
-    const qx = (px + WX * t) * sc, qy = (py * 0.5 + WZ * t * 0.3) * sc, qz = (pz + WZ * t) * sc;
+    const qx = (px - WX * t) * sc + L.type * 13.7 + 3.1, qy = (py * 0.5) * sc, qz = (pz - WZ * t) * sc + L.type * 7.3 + 5.7;
     let n = fbm(qx, qy, qz);
     n += det * (fbm(qx * 3.1, qy * 3.1, qz * 3.1) - 0.5) * 0.6;
     n = Math.max(0, Math.min(1, n));
-    d += ss(L.coverage - 0.09, L.coverage + 0.09, n) * L.density * vfall;
+    const thresh = 0.76 - L.coverage * 0.55;
+    d += ss(thresh - 0.09, thresh + 0.09, n) * (0.65 + 0.35 * n) * L.density * vfall;
   }
   return d;
 }

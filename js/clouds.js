@@ -59,12 +59,14 @@
   uniform float uSliceAlt, uSliceOn;
   // 微物理属性着色叠加：色标由 CMap 导出成 256×1 LUT，与 2D 图例、水平切片共用一份定义
   uniform highp sampler2D uTintTex;
-  uniform int   uTintField;       // 0 关闭 / 1 LWC / 2 β / 3 rₑ(派生)
+  uniform int   uTintField;       // 0 关闭 / 1 LWC / 2 β / 3 rₑ / 4 N_d
   uniform float uTintAmt;
   uniform vec2  uTintRange;       // 归一化区间 [lo, hi]
-  uniform float uLwcScale;        // LWC_MAX × 冰相折减
+  uniform float uLwcScale;        // LWC_MAX × 米氏消光修正
+  uniform float uIceFrac;         // 手动冰相比例
+  uniform float uAutoPhase;       // 1 = 按温度廓线自动分配混合相冰/水比
   uniform float uMicroRe;         // 有效半径 µm（β 用）
-  uniform float uMicroN;          // 云滴数浓度 cm⁻³（派生 rₑ 用）
+  uniform float uMicroN;          // 云滴数浓度 cm⁻³（派生 rₑ 与 N_d 着色用）
   uniform float uReMode;          // 1 = r_e 由 LWC 与 N 反推；0 = 用 uMicroRe
   // ETH CLOUDLAB 过冷水层云人工播云消散沟（WBF 冰化减消光）
   uniform float uSeedOn;
@@ -109,11 +111,12 @@
     float d2 = (h - peak) * 2.0;
     float vfall = exp(-d2 * d2 * w);
     float sc = uScaleDet[i].x, det = uScaleDet[i].y;
-    vec3 np = vec3(p.x - uWind.x * uTime, p.y * 0.5 - uWind.y * uTime * 0.3, p.z - uWind.y * uTime) * sc;
+    vec3 np = vec3(p.x - uWind.x * uTime, p.y * 0.5, p.z - uWind.y * uTime) * sc + vec3(ty * 13.7 + 3.1, 0.0, ty * 7.3 + 5.7);
     float n = fbm(np);
     n += det * (fbm(np * 3.1) - 0.5) * 0.6;
     n = clamp(n, 0.0, 1.0);
-    float cov = smoothstep2(uCovDen[i].x - 0.09, uCovDen[i].x + 0.09, n);
+    float thresh = 0.76 - uCovDen[i].x * 0.55;
+    float cov = smoothstep2(thresh - 0.09, thresh + 0.09, n) * (0.65 + 0.35 * n);
     return cov * uCovDen[i].y * vfall;
   }
   float totalDensity(vec3 p){
@@ -155,8 +158,27 @@
     float b = clamp(1.5 - abs(4.0*t - 1.0), 0.0, 1.0);
     return vec3(r, g, b);
   }
+  float tempAt(float z){ return uSurfaceTemp - uLapse * z; }
+  float pressAt(float z){
+    float Tk0 = uSurfaceTemp + 273.15;
+    float Tk  = tempAt(z) + 273.15;
+    float lr = max(0.05, uLapse);
+    float expo = 1000.0 * 9.80665 / (287.05 * lr);  // lr 为 K/km → Γ=lr/1000 K/m，须 ×1000
+    return uSurfacePressure * pow(Tk / Tk0, expo);
+  }
+  float iceFracAt(float z){
+    float T = tempAt(z);
+    if(T <= -38.0) return 1.0;
+    if(uAutoPhase > 0.5){
+      if(T >= 0.0) return 0.0;
+      return pow(clamp(-T / 38.0, 0.0, 1.0), 1.35);
+    }
+    return clamp(uIceFrac, 0.0, 1.0);
+  }
   // 云微物理派生量（单位见 colormap.js 的对应区间）
-  float lwcAt(float d){ return clamp(d, 0.0, 1.0) * uLwcScale; }              // g/m³
+  float lwcAt(float d, float z){
+    return clamp(d, 0.0, 1.0) * uLwcScale * (1.0 - 0.6 * iceFracAt(z));
+  }                                                                            // g/m³
   float betaAt(float lwc, float reUm){ return 1500.0 * lwc / max(0.5, reUm); } // km⁻¹
   float reAt(float lwc, float N){                                             // µm：由 LWC 与 N 反推
     float lwcKg = lwc / 1000.0;
@@ -189,18 +211,10 @@
     }
     return base;
   }
-  float tempAt(float z){ return uSurfaceTemp - uLapse * z; }
-  float pressAt(float z){
-    float Tk0 = uSurfaceTemp + 273.15;
-    float Tk  = tempAt(z) + 273.15;
-    float lr = max(0.05, uLapse);
-    float expo = 1000.0 * 9.80665 / (287.05 * lr);  // lr 为 K/km → Γ=lr/1000 K/m，须 ×1000
-    return uSurfacePressure * pow(Tk / Tk0, expo);
-  }
   // 世界坐标 -> occ 纹理坐标。occ 建在 t=0 的噪声空间里，云体则随 uWind*uTime 平移，
   // 所以查表前要先把点搬回噪声空间，否则云飘走后 occ 与实际密度错配。
   float sampleOcc(vec3 p){
-    vec3 q = vec3(p.x - uWind.x*uTime, p.y - uWind.y*uTime*0.6, p.z - uWind.y*uTime);
+    vec3 q = vec3(p.x - uWind.x*uTime, p.y, p.z - uWind.y*uTime);
     vec3 n = vec3((q.x + uOccDomX*0.5)/uOccDomX, q.y/uMaxAlt, (q.z + uOccDomX*0.5)/uOccDomX);
     if(any(lessThan(n, vec3(0.0))) || any(greaterThan(n, vec3(1.0)))) return 1.0;   // 域外一律按有云处理
     return texture(uOcc, n).r;
@@ -301,18 +315,19 @@
         } else if(uViewMode == 2){
           sc = pressureColor(pressAt(pos.y)) * (0.5 + 0.5 * lt);
         } else if(uViewMode == 3){
-          sc = tintOf(lwcAt(d)) * (0.6 + 0.4 * lt);
+          sc = tintOf(lwcAt(d, pos.y)) * (0.6 + 0.4 * lt);
         } else {
           sc = vec3(clamp(d, 0.0, 1.0));
         }
 
         // 微物理属性半透明叠加（放在视图配色之后——sc 在这里才刚有值）
         if(uTintField > 0){
-          float lwcv = lwcAt(d);
+          float lwcv = lwcAt(d, pos.y);
           float reEff = (uReMode > 0.5) ? reAt(lwcv, uMicroN) : uMicroRe;
           float q = (uTintField == 1) ? lwcv
                   : (uTintField == 2) ? betaAt(lwcv, reEff)
-                                      : reAt(lwcv, uMicroN);
+                  : (uTintField == 3) ? reEff
+                                      : uMicroN;
           sc = mix(sc, tintOf(q), uTintAmt);
         }
 
@@ -410,9 +425,10 @@
       var h=(py-base)/Math.max(0.001,top-base); var peak=0.5,w=1.0,ty=L.type;
       if(ty<0.5){peak=0.75;w=0.7;} else if(ty<1.5){peak=0.5;w=1.0;} else if(ty<2.5){peak=0.4;w=1.6;} else if(ty<3.5){peak=0.32;w=1.3;} else {peak=0.4;w=1.1;}
       var d2=(h-peak)*2; var vfall=Math.exp(-d2*d2*w); var sc=L.scale, det=L.detail;
-      var sx=px*sc, sy=(py*0.5)*sc, sz=pz*sc;
+      var sx=px*sc + ty*13.7 + 3.1, sy=(py*0.5)*sc, sz=pz*sc + ty*7.3 + 5.7;
       var n=fbm(sx,sy,sz); n += det*(fbm(sx*3.1,sy*3.1,sz*3.1)-0.5)*0.6; n=n<0?0:(n>1?1:n);
-      var cov=smoothstep(L.coverage-0.09, L.coverage+0.09, n);
+      var thresh=0.76 - L.coverage*0.55;
+      var cov=smoothstep(thresh-0.09, thresh+0.09, n)*(0.65 + 0.35*n);
       return cov*L.density*vfall; }
     function totalDensity(px,py,pz){ var dd=0; for(var k=0;k<layers.length;k++) dd+=layerDensity(px,py,pz,layers[k]); return dd; }
     for(var k=0;k<dim;k++){ var z=((k+0.5)/dim)*domX - domX/2;
@@ -460,7 +476,7 @@
       'uBaseTop','uCovDen','uScaleDet','uType','uSurfaceTemp','uLapse','uSurfacePressure',
       'uOcc','uOccAvail','uOccDomX','uOccSkip','uJitter',
       'uSliceAlt','uSliceOn','uTintTex','uTintField','uTintAmt','uTintRange',
-      'uLwcScale','uMicroRe','uMicroN','uReMode','uFieldBand','uBandT','uBandP',
+      'uLwcScale','uIceFrac','uAutoPhase','uMicroRe','uMicroN','uReMode','uFieldBand','uBandT','uBandP',
       'uSeedOn','uSeedOrigin','uSeedDir','uSeedParams'];
     for (const n of names) this.u[n] = gl.getUniformLocation(this.prog, n);
     this.uComp = {
@@ -721,17 +737,19 @@
     const mapId = field === 'off' ? 'lwc' : field;
     const cm = global.CMap && global.CMap.CMAPS[mapId];
     const range = cm ? cm.range : [0, 1.5];
-    gl.uniform1i(u.uTintField, field === 'off' ? 0 : (field === 'lwc' ? 1 : field === 'beta' ? 2 : 3));
+    const tintCode = field === 'off' ? 0 : (field === 'lwc' ? 1 : field === 'beta' ? 2 : field === 're' ? 3 : 4);
+    gl.uniform1i(u.uTintField, tintCode);
     gl.uniform1f(u.uTintAmt, S.tintAmt == null ? 0.45 : S.tintAmt);
     gl.uniform2f(u.uTintRange, range[0], range[1]);
-    const effIce = Atmosphere.iceFractionAt ? Atmosphere.iceFractionAt(S.sliceAlt) : S.micro.iceFrac;
     const veffNow = (global.Physics && global.Physics.currentVeff) ? global.Physics.currentVeff() : ((S.spectrum && S.spectrum.veff) || 0.10);
     const mieFac = (global.Mie && global.Mie.qextPolydisperse)
       ? (global.Mie.qextPolydisperse(2 * Math.PI * Math.max(0.5, S.micro.effRadiusUm || 8) / 0.55, veffNow) / 2.0)
       : 1.0;
-    gl.uniform1f(u.uLwcScale, Atmosphere.LWC_MAX * (1 - 0.6 * effIce) * mieFac);
+    gl.uniform1f(u.uLwcScale, Atmosphere.LWC_MAX * mieFac);
+    gl.uniform1f(u.uIceFrac, S.micro.iceFrac || 0);
+    gl.uniform1f(u.uAutoPhase, S.micro.autoPhaseTemp ? 1 : 0);
     gl.uniform1f(u.uMicroRe, S.micro.effRadiusUm);
-    gl.uniform1f(u.uMicroN, S.micro.dropConc);
+    gl.uniform1f(u.uMicroN, Atmosphere.operativeDropConc ? Atmosphere.operativeDropConc() : S.micro.dropConc);
     gl.uniform1f(u.uReMode, S.micro.reMode === 'derived' ? 1 : 0);
 
     // ETH CLOUDLAB 人工播云下风向消散沟 uniform（耦合催化剂成核温度阈值窗口因子 tFactor）
@@ -740,8 +758,12 @@
     const inpSat = 1 - Math.exp(-Math.max(0, sd.inpConc || 80) / 35);
     const seedAlt = sd.alt != null ? sd.alt : 1.1;
     const Tseed = Atmosphere.tempAt(seedAlt);
-    const thresh = sd.agent === 'co2' ? -0.5 : -4.0;
-    const tFactor = Tseed <= thresh ? 1.0 : (Tseed <= 2.0 ? 0.80 : 0.60);
+    const agent = String(sd.agent || 'agi').toLowerCase();
+    const thresh = agent === 'co2' ? -0.5 : -5.0;
+    const wbf = Atmosphere.wbfVaporDiff ? Atmosphere.wbfVaporDiff(Tseed) : { normFactor: 1 };
+    const tFactor = Tseed >= 0 ? 0 : (Tseed <= thresh
+      ? Math.min(1.15, 0.72 + 0.43 * wbf.normFactor)
+      : (agent === 'co2' ? (0.45 + 0.30 * wbf.normFactor) : Math.max(0, ((thresh - Tseed + 5.0) / 5.0) * 0.35 * wbf.normFactor)));
     const eff = Math.min(0.95, Math.max(0, (sd.glaciationEff != null ? sd.glaciationEff : 0.85) * inpSat * tFactor));
     gl.uniform1f(u.uSeedOn, sd.on ? 1 : 0);
     gl.uniform3f(u.uSeedOrigin, sd.x0 != null ? sd.x0 : -8.0, seedAlt, sd.z0 != null ? sd.z0 : 0.0);

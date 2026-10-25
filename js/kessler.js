@@ -51,8 +51,8 @@
       pgr = 67 * Math.pow(qcPos * qrPos, 1.15);
     } else if (scheme === 'sb06') {
       // Seifert & Beheng (2006), Meteorology & Atmospheric Physics (ICON 2-moment scheme):
-      //   由有效方差 ν_eff 换算 Gamma 形状参数 ν = (1 / ν_eff) - 3，限制在 [0, 4]
-      const nu = Math.max(0, Math.min(4, (1 / Math.max(0.05, veff)) - 3));
+      //   由半径谱有效方差 ν_eff 换算质量谱 Gamma 形状参数 ν_m = (1 / ν_eff - 5) / 3，限制在 [0, 4]
+      const nu = Math.max(0, Math.min(4, ((1 / Math.max(0.03, veff)) - 5) / 3));
       const kc = 9.44e9;                              // Long 核系数 (m³ kg⁻² s⁻¹)
       const x_c = Math.min(2.6e-10, Math.max(4.2e-15, (rho * qcPos) / (N_cm3 * 1e6 + 1))); // 平均云滴质量 kg
       const x_star = 2.6e-10;                         // 分界质量 (r ≈ 40 µm)
@@ -77,9 +77,15 @@
     const sd = S.seeding;
     if (!sd || !sd.on || qc <= 0) return 0;
     const T = A.tempAt(zMid);
-    const thresh = sd.agent === 'co2' ? -0.5 : -4.0;
+    // 暖云物理硬约束：T ≥ 0°C 时无过冷水，WBF 冰化速率严格为 0
+    if (T >= 0) return 0;
+    const agent = String(sd.agent || 'agi').toLowerCase();
+    const thresh = agent === 'co2' ? -0.5 : -5.0;
     const wbf = A.wbfVaporDiff ? A.wbfVaporDiff(T) : { normFactor: Math.exp(-Math.pow((T + 12.5) / 8, 2)) };
-    const tempEff = T <= thresh ? Math.min(1.35, 0.35 + 1.0 * wbf.normFactor) : (T < 0 ? 0.25 + 0.45 * wbf.normFactor : 0.25);
+    const tempEff = T <= thresh
+      ? Math.min(1.35, 0.35 + 1.0 * wbf.normFactor)
+      : (agent === 'co2' ? (0.25 + 0.45 * wbf.normFactor) : Math.max(0, ((thresh - T + 5.0) / 5.0) * 0.35 * wbf.normFactor));
+    if (tempEff <= 0) return 0;
     const altEff = Math.exp(-Math.pow((zMid - (sd.alt || 1.1)) / 1.2, 2));
     const inpRate = 1.8e-3 * (1 - Math.exp(-Math.max(0, sd.inpConc || 80) / 40));
     return qc * inpRate * tempEff * altEff;
@@ -187,13 +193,16 @@
       });
     }
     // 当前 N 下的三方案即时对比与残差
-    const curN = S.micro.dropConc || 300;
+    const curN = (A.operativeDropConc ? A.operativeDropConc() : S.micro.dropConc) || 300;
     const idx = Math.max(0, Math.min(nPts - 1, Math.round((curN - nMin) / (nMax - nMin) * (nPts - 1))));
     return {
       N: curves.N,
       kessler: curves.kessler,
       kk2000: curves.kk2000,
       sb06: curves.sb06,
+      qcRef,
+      qrRef,
+      rho,
       atCurrentN: {
         N: curN,
         kessler: curves.kessler[idx],

@@ -46,22 +46,32 @@
     };
 
     let dragging = false;
+    const move = (e) => {
+      if (!dragging) return;
+      A.STATE.sliceAlt = yToAlt(e.clientY);
+      place(); onChange();
+    };
+    const up = () => {
+      if (dragging) { dragging = false; handle.classList.remove('dragging'); }
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
     const down = (e) => {
       dragging = true;
       handle.classList.add('dragging');
       A.STATE.sliceAlt = yToAlt(e.clientY);
       place(); onChange();
       e.preventDefault();
+      window.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', up);
     };
-    const move = (e) => {
-      if (!dragging) return;
-      A.STATE.sliceAlt = yToAlt(e.clientY);
-      place(); onChange();
+    const onTouchMove = (e) => { if (dragging && e.touches[0]) { move(e.touches[0]); e.preventDefault(); } };
+    const onTouchEnd = () => {
+      up();
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
     };
-    const up = () => { if (dragging) { dragging = false; handle.classList.remove('dragging'); } };
     handle.addEventListener('mousedown', down);
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
     track.addEventListener('click', (e) => {
       if (e.target === handle) return;
       A.STATE.sliceAlt = yToAlt(e.clientY);
@@ -73,9 +83,16 @@
       place(); onChange();
     }, { passive: false });
     // 触摸
-    handle.addEventListener('touchstart', (e) => { down(e.touches[0]); }, { passive: false });
-    window.addEventListener('touchmove', (e) => { if (dragging) { move(e.touches[0]); e.preventDefault(); } }, { passive: false });
-    window.addEventListener('touchend', up);
+    handle.addEventListener('touchstart', (e) => {
+      if (!e.touches[0]) return;
+      dragging = true;
+      handle.classList.add('dragging');
+      A.STATE.sliceAlt = yToAlt(e.touches[0].clientY);
+      place(); onChange();
+      e.preventDefault();
+      window.addEventListener('touchmove', onTouchMove, { passive: false });
+      window.addEventListener('touchend', onTouchEnd);
+    }, { passive: false });
 
     place();
 

@@ -172,7 +172,7 @@
       'leg.temp': '温度', 'leg.pressure': '气压', 'leg.water': '含水量',
 
       // 能见度仪表盘读数
-      'dash.worst': '最差能见度 · 云内 @ {alt} km',
+      'dash.worst': '最差能见度 · 云内 @ {alt}',
       'dash.infinite': '∞ (晴空)',
       'dash.visFormula': '能见度 V = ln(1/ε) / β　(Koschmieder, ε=0.02)',
       'dash.densityFormula': '密度归一化：d = clamp(LWC/LWC_max,0,1)·noise，LWC_max={max} g/m³',
@@ -283,7 +283,7 @@
       'replay.axis': '回放时间轴 (ms)', 'replay.status': '事件数：{n}',
       'replay.importFail': '导入失败：{msg}',
 
-      // 高级诊断（路线图 #1–#14）
+      // 高级诊断
       'grp.adv': '高级诊断', 'adv.open': '高级诊断面板', 'adv.title': '高级诊断面板',
       'nav.spectrum': '粒子谱', 'nav.phases': '相态分档', 'nav.operators': '观测算子',
       'nav.timeseries': '时变预报', 'nav.spatial': '空间场', 'nav.sensitivity': '敏感性',
@@ -334,6 +334,10 @@
       'cl.compute': '刷新三方案对比曲线', 'cl.seedDemo': '一键加载 CLOUDLAB 过冷层云播云场景',
       'cl.visAmb': '背景云能见度', 'cl.visSeed': '播云沟槽内能见度', 'cl.gain': '能见度增益 / 跑道标准',
       'ex.icon': '导出 ICON-LES Namelist (.nml)', 'ex.yaml': '导出实验配置 YAML',
+      'ex.profCsv': '导出廓线 CSV', 'ex.schCsv': '导出方案对比 CSV',
+      'tint.Nd': '滴数浓度 N',
+      'const.ccn': 'CCN 活化耦合 (β_aer+w → N_c)', 'const.ccn.tip': 'Twomey / Abdul-Razzak 气溶胶与上升气流耦合活化云滴数浓度 N_c',
+      'sen.rain': '降水率 R (mm/h)', 'sen.albedo': '云反照率 Albedo',
     },
 
     en: {
@@ -464,7 +468,7 @@
 
       'leg.temp': 'Temperature', 'leg.pressure': 'Pressure', 'leg.water': 'Liquid Water',
 
-      'dash.worst': 'Worst Visibility · in-cloud @ {alt} km',
+      'dash.worst': 'Worst Visibility · in-cloud @ {alt}',
       'dash.infinite': '∞ (clear)',
       'dash.visFormula': 'Visibility V = ln(1/ε) / β　(Koschmieder, ε=0.02)',
       'dash.densityFormula': 'Density normalization: d = clamp(LWC/LWC_max,0,1)·noise, LWC_max={max} g/m³',
@@ -570,7 +574,7 @@
       'replay.axis': 'Replay Timeline (ms)', 'replay.status': 'Events: {n}',
       'replay.importFail': 'Import failed: {msg}',
 
-      // Advanced diagnostics (roadmap #1–#14)
+      // Advanced diagnostics
       'grp.adv': 'Advanced diagnostics', 'adv.open': 'Advanced diagnostics panel', 'adv.title': 'Advanced diagnostics panel',
       'nav.spectrum': 'Spectrum', 'nav.phases': 'Phases', 'nav.operators': 'Operators',
       'nav.timeseries': 'Time series', 'nav.spatial': 'Spatial field', 'nav.sensitivity': 'Sensitivity',
@@ -621,6 +625,10 @@
       'cl.compute': 'Refresh 3-Scheme Curves', 'cl.seedDemo': 'Load CLOUDLAB Supercooled Seeding Preset',
       'cl.visAmb': 'Ambient Cloud Vis', 'cl.visSeed': 'In-Trench Seeded Vis', 'cl.gain': 'Vis Gain / CAT-I Status',
       'ex.icon': 'Export ICON-LES Namelist (.nml)', 'ex.yaml': 'Export Experiment YAML',
+      'ex.profCsv': 'Export Profile CSV', 'ex.schCsv': 'Export Schemes CSV',
+      'tint.Nd': 'Droplet N',
+      'const.ccn': 'CCN Activation Coupling (β_aer+w → N_c)', 'const.ccn.tip': 'Twomey / Abdul-Razzak aerosol and updraft coupled droplet activation N_c',
+      'sen.rain': 'Rain Rate R (mm/h)', 'sen.albedo': 'Cloud Albedo',
     },
 
     de: {
@@ -751,7 +759,7 @@
 
       'leg.temp': 'Temperatur', 'leg.pressure': 'Druck', 'leg.water': 'Flüssigwasser',
 
-      'dash.worst': 'Schlechteste Sicht · in Wolke @ {alt} km',
+      'dash.worst': 'Schlechteste Sicht · in Wolke @ {alt}',
       'dash.infinite': '∞ (klarer Himmel)',
       'dash.visFormula': 'Sichtweite V = ln(1/ε) / β　(Koschmieder, ε=0.02)',
       'dash.densityFormula': 'Dichte-Normalisierung: d = clamp(LWC/LWC_max,0,1)·noise, LWC_max={max} g/m³',
@@ -857,7 +865,7 @@
       'replay.axis': 'Wiedergabe-Zeitachse (ms)', 'replay.status': 'Ereignisse: {n}',
       'replay.importFail': 'Import fehlgeschlagen: {msg}',
 
-      // Erweiterte Diagnostik (Roadmap #1–#14)
+      // Erweiterte Diagnostik
       'grp.adv': 'Erweiterte Diagnostik', 'adv.open': 'Erweiterte Diagnostik', 'adv.title': 'Erweiterte Diagnostik',
       'nav.spectrum': 'Spektrum', 'nav.phases': 'Phasen', 'nav.operators': 'Operatoren',
       'nav.timeseries': 'Zeitreihe', 'nav.spatial': 'Raumfeld', 'nav.sensitivity': 'Sensitivität',
@@ -908,6 +916,10 @@
       'cl.compute': '3-Schema-Kurven aktualisieren', 'cl.seedDemo': 'CLOUDLAB Impfszenario laden',
       'cl.visAmb': 'Umgebungssicht', 'cl.visSeed': 'Sicht im Impfgraben', 'cl.gain': 'Gewinn / CAT-I Status',
       'ex.icon': 'ICON-LES Namelist (.nml)', 'ex.yaml': 'Experiment-YAML exportieren',
+      'ex.profCsv': 'Profil-CSV exportieren', 'ex.schCsv': 'Schemata-CSV exportieren',
+      'tint.Nd': 'Tröpfchenzahl N',
+      'const.ccn': 'CCN-Aktivierungskopplung (β_aer+w → N_c)', 'const.ccn.tip': 'Twomey / Abdul-Razzak Aerosol- und Aufwind-gekoppelte Tropfenaktivierung N_c',
+      'sen.rain': 'Regenrate R (mm/h)', 'sen.albedo': 'Wolkenalbedo',
     },
   };
 

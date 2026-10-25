@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-/* cli.js — CloudField 命令行批量诊断（#10）
+/* cli.js — CloudField 命令行批量诊断
  * 在 Node 中以伪 window 加载浏览器模块（atmosphere/physics/.../batch），
  * 支持机场列表 × 时次矩阵无人值守批量诊断，输出 CSV 或 JSON。
  *
  * 用法：
  *   node tools/cli.js --stations stations.json --times 0,6,12,18 --out result.csv
  *   node tools/cli.js --stations stations.json --format json --out result.json
+ *   node tools/cli.js --preset cloudlab --format yaml
  *
  * stations.json 示例：
  *   [{"name":"ZSSS","patch":{"env":{"surfaceTemp":15,"surfaceRH":80},"layers":{"sc":{"coverage":0.6,"density":0.6}}}},
@@ -17,7 +18,7 @@ const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
 const MODULES = ['js/atmosphere.js', 'js/mie.js', 'js/radiation.js', 'js/physics.js', 'js/spectrum.js', 'js/phases.js',
-  'js/kessler.js', 'js/operators.js', 'js/timeseries.js', 'js/qc.js', 'js/validation.js', 'js/export.js', 'js/batch.js'];
+  'js/kessler.js', 'js/operators.js', 'js/timeseries.js', 'js/qc.js', 'js/validation.js', 'js/export.js', 'js/batch.js', 'js/help.js'];
 
 // 伪浏览器环境：window 即全局上下文
 const sandbox = {};
@@ -59,6 +60,9 @@ function parseArgs(argv) {
 
 function main() {
   const o = parseArgs(process.argv.slice(2));
+  if (o.preset && sandbox.window.Help && typeof sandbox.window.Help.applyScenario === 'function') {
+    sandbox.window.Help.applyScenario(o.preset);
+  }
   if (o.scheme && A.STATE.micro) A.STATE.micro.scheme = o.scheme;
   if (o.dropConc != null && isFinite(o.dropConc) && A.STATE.micro) A.STATE.micro.dropConc = o.dropConc;
   if (o.seedInp != null && isFinite(o.seedInp) && A.STATE.seeding) {

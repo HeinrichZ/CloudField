@@ -18,11 +18,11 @@
 │         └──────────────────────┼────────────────────┘         │
 │                        主循环 / STATE（Atmosphere）            │
 └──────────────────────────────────────────────────────────────┘
-            │  WebSocket (Delta) / REST    ▲ 密钥(一次性令牌)
-            ▼                              │
+            │  WebSocket (Delta / Snapshot / Telemetry)  ▲ REST JSON
+            ▼                                            │
 ┌──────────────────────────────────────────────────────────────┐
 │ Bridge Adapter（独立进程，Node，纯内置模块）                    │
-│  · REST: /api/airports /schema /metar /sessions /key           │
+│  · REST: /api/airports /schema /metar /sessions               │
 │  · WS:   snapshot / delta / telemetry / ping-pong             │
 │  · 气象解析（METAR/BUFR/GRIB2 预解码）、多节点同步、会话落盘    │
 └──────────────────────────────────────────────────────────────┘
@@ -57,7 +57,7 @@
 
 ## 空区间跳步的三条硬约束
 
-密度粗网格只是加速结构，不能改变画面。相关约束见 README 第 9 节，要点：
+密度粗网格只是加速结构，不能改变画面。相关约束见 README 第 8 节，要点：
 
 - occ 出 worker 前先做一邻域膨胀，保证“判空”是保守结论；
 - 步长随 occ 连续过渡，不做 `occ < ε` 一刀切；

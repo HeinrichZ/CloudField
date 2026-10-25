@@ -483,7 +483,7 @@ ok(Amod.STATE.showSlice === true, '默认开启 3D 剖面高度线');
 ok(Amod.STATE.tintField === 'off', '默认不叠加微物理着色');
 ok(/uSliceAlt/.test(clouds) && /uTintField/.test(clouds), '着色器含剖面高度与微物理着色 uniform');
 
-// ================= 11. 扩展诊断模块（路线图 #1–#14） =================
+// ================= 11. 扩展诊断模块 =================
 section('11. 扩展诊断模块导出与基本函数');
 ok(typeof win.Physics === 'object' && typeof win.Physics.fieldStats === 'function', 'Physics 已导出（fieldStats 等）');
 ok(typeof win.Spectrum === 'object' && typeof win.Spectrum.moments === 'function', 'Spectrum 已导出');
@@ -552,8 +552,10 @@ ok(win.Phases.current().ice === 1 && win.Phases.current().water === 0, 'Phases.s
 win.Phases.normalize();
 ok(Math.abs(Object.values(win.Phases.current()).reduce((a, b) => a + b, 0) - 1) < 1e-9, 'Phases.normalize 归一和为 1');
 win.Phases.set('pureWater');
+const snapBeforeFog = Amod.serialize();
 win.Help.applyScenario('fog');
 ok(isFinite(win.Atmosphere.STATE.surfaceTemp) && win.Atmosphere.STATE.layers.sc.on, 'Help.applyScenario(fog) 修改状态');
+Amod.deserialize(snapBeforeFog);
 
 // 录制/回放闭环
 win.Recorder.start(); win.Recorder.record('x'); win.Recorder.stop();
@@ -577,9 +579,9 @@ const newKeys = ['adv.open', 'adv.title', 'nav.timeseries', 'nav.spatial', 'nav.
   'nav.validation', 'nav.recorder', 'nav.report', 'nav.help', 'nav.scenarios',
   'spec.type', 'spec.gamma', 'spec.lognormal', 'spec.measured', 'spec.import',
   'phase.water', 'phase.preset', 'phase.normalize', 'aerosol.on', 'op.visibility',
-  'ts.title', 'ts.default', 'sp.title', 'sp.coverage', 'sen.title', 'qc.title', 'qc.ok',
-  'ex.title', 'ex.metar', 'val2.title', 'val2.bias', 'rec.title', 'rec.start',
-  'rep.title', 'rep.share', 'help.title', 'help.scenario', 'help.fog'];
+  'ts.title', 'ts.default', 'sp.title', 'sp.coverage', 'sen.title', 'sen.rain', 'sen.albedo', 'qc.title', 'qc.ok',
+  'ex.title', 'ex.metar', 'ex.profCsv', 'ex.schCsv', 'val2.title', 'val2.bias', 'rec.title', 'rec.start',
+  'rep.title', 'rep.share', 'help.title', 'help.scenario', 'help.fog', 'tint.Nd', 'const.ccn', 'const.ccn.tip'];
 let newKeyLeak = [];
 for (const k of newKeys) {
   for (const lang of ['zh', 'en', 'de']) {
@@ -744,6 +746,7 @@ ok(Math.abs(bufrDew - Number(Amod.dewAt(0).toFixed(2))) < 1e-6, 'BUFR 导出露�
 const rThick = Rad.reflectance(128, 0.5, 0.999, 0.85);
 ok(rThick > 0.78 && rThick < 1.0, '双流辐射：厚云极限 (τ=128) 反照率收敛于渐近极限 R_∞ > 0.78（不归零）', rThick.toFixed(3));
 
+Amod.STATE.surfaceTemp = 0; // 1 km 处约 -6.5°C（过冷云）
 Amod.STATE.windDir = 270;
 Amod.STATE.seeding.on = true; Amod.STATE.seeding.x0 = -8; Amod.STATE.seeding.alt = 1.0;
 const pNear = Amod.seedingPlumeAt(-7.2, 0, 1.0); // 下风向 0.8 km（近源端冰晶过渡区）
@@ -751,6 +754,11 @@ const pFar = Amod.seedingPlumeAt(-1.0, 0, 1.0);  // 下风向 7.0 km（远端沉
 ok(pNear.iceBoost > 0.3 && pFar.depletion > pNear.depletion,
   'WBF 两阶段羽流：近源端冰晶激增过渡、远端沉降消云加深',
   `iceBoost=${pNear.iceBoost.toFixed(2)}, dep: ${pNear.depletion.toFixed(2)} → ${pFar.depletion.toFixed(2)}`);
+Amod.STATE.surfaceTemp = 20; // 1 km 处 +13.5°C（暖云 T >= 0°C）
+const pWarm = Amod.seedingPlumeAt(-1.0, 0, 1.0);
+ok(pWarm.depletion === 0 && pWarm.iceBoost === 0 && Kes.wbfRate(0.001, 1.0) === 0,
+  '暖云物理守恒：T ≥ 0°C 时 WBF 冰化速率与播云消云量严格为 0');
+Amod.STATE.surfaceTemp = svSurfT;
 Amod.STATE.seeding = svSeed;
 
 const tbNow = win.Operators.satelliteTb(0);
@@ -855,10 +863,12 @@ ok(impRes.ok && impRes.count === 4 && Math.abs(Amod.STATE.surfaceTemp - 21.0) < 
 Amod.resetRadiosonde();
 ok(Amod.getRadiosonde().data.length === Amod.RADIOSONDE_SAMPLE.data.length, 'Atmosphere.resetRadiosonde 恢复默认探空样本');
 
+const snapBeforeScen = Amod.serialize();
 win.Help.applyScenario('cloudlab');
 ok(Amod.STATE.seeding.on === true && Amod.STATE.micro.scheme === 'sb06', 'Help.applyScenario(cloudlab) 一键激活 CLOUDLAB 播云与 SB06 方案');
 win.Help.applyScenario('fog');
 ok(Amod.STATE.seeding.on === false, '切换至其他场景预设 (fog) 时自动清除残留播云状态 seeding.on=false');
+Amod.deserialize(snapBeforeScen);
 
 const wvd = win.Physics.worstVisibilityDetailed(0);
 ok(wvd && isFinite(wvd.vis) && typeof wvd.x === 'number' && typeof wvd.y === 'number',
@@ -913,6 +923,51 @@ const sgAlb = win.Physics.sensitivityGrid(
 ok(sgRain.hi > sgRain.lo && sgAlb.hi > sgAlb.lo && sgAlb.hi <= 1.0,
   'sensitivityGrid 支持降水率 (rainRate) 与云反照率 (albedo) 敏感性扫描',
   `R=[${sgRain.lo.toFixed(2)}, ${sgRain.hi.toFixed(2)}] mm/h, Alb=[${sgAlb.lo.toFixed(3)}, ${sgAlb.hi.toFixed(3)}]`);
+
+// 11) 物理与协议严谨性回归校验（无副作用 CCN、SB06 连续谱宽响应、晴空 CRE=0、METAR 闭环与覆盖率单调性）
+Amod.STATE.micro.dropConc = 250;
+Amod.STATE.micro.ccnCoupled = true;
+Amod.STATE.aerosol.on = true; Amod.STATE.aerosol.beta0 = 8e-4;
+const ncCoupledVal = Amod.operativeDropConc();
+ok(ncCoupledVal !== 250 && Amod.STATE.micro.dropConc === 250,
+  'operativeDropConc() 为纯函数：开启 ccnCoupled 时不篡改用户滑块基准值 STATE.micro.dropConc',
+  `coupled=${ncCoupledVal.toFixed(0)}, state=${Amod.STATE.micro.dropConc}`);
+Amod.STATE.micro.ccnCoupled = false;
+
+Amod.STATE.spectrum.veff = 0.06;
+const cmpNarrow = Kes.compareSchemes({ qc: 0.0015, qr: 1e-5 });
+Amod.STATE.spectrum.veff = 0.14;
+const cmpMid = Kes.compareSchemes({ qc: 0.0015, qr: 1e-5 });
+ok(cmpMid.sb06[2] > cmpNarrow.sb06[2] * 1.05,
+  'ICON-SB06 质量形状参数 ν_m=(1/ν_eff-5)/3 在 ν_eff∈[0.06, 0.14] 区间平滑响应（无死区）',
+  `R(0.06)=${cmpNarrow.sb06[2].toFixed(3)} → R(0.14)=${cmpMid.sb06[2].toFixed(3)} mm/h`);
+
+Amod.LAYER_ORDER.forEach(k => { Amod.STATE.layers[k].on = false; });
+Amod.STATE.aerosol.on = true; Amod.STATE.aerosol.beta0 = 6e-4;
+const opsClear = win.Operators.compute(0, { all: true });
+ok(opsClear.creSW === 0 && opsClear.twomeyForcing === 0 && opsClear.radar.dBZ === -40,
+  '无云但开启气溶胶时：短波云辐射效应 CRE_SW=0、Twomey 强迫=0、雷达反射率=-40 dBZ（不误报强回波或正强迫）',
+  `CRE=${opsClear.creSW}, dBZ=${opsClear.radar.dBZ}`);
+
+Amod.STATE.layers.sc.on = true; Amod.STATE.layers.sc.coverage = 0.35; Amod.STATE.layers.sc.density = 0.3;
+const opsThin = win.Operators.compute(0, { all: true });
+ok(opsThin.creSW < 0, '薄云场景下耦合地表反照率后短波云辐射效应 CRE_SW 恒为负值（冷却效应）', `CRE_SW=${opsThin.creSW.toFixed(2)} W/m²`);
+
+Amod.STATE.windSpeed = 10; // 10 m/s ≈ 19 kt
+Amod.STATE.surfaceTemp = 18;
+const metarStr = win.Exporter.toMETAR('ZBAA');
+const parsedMetar = win.Integration.parse(metarStr);
+ok(/19KT/.test(metarStr) && !/\bSKC\b.*\b(FEW|SCT|BKN|OVC)/.test(metarStr) && parsedMetar && parsedMetar.station === 'ZBAA' && parsedMetar.clouds.length > 0,
+  'Exporter.toMETAR 导出标准节 (kt) 风速与 ICAO 云组，且可被 Integration.METAR.parse 闭环解析',
+  metarStr);
+
+Amod.STATE.layers.sc.coverage = 0.25; Amod.STATE.layers.sc.density = 0.8;
+const stLowCov = win.Physics.fieldStats({ z: 1.0, N: 12, time: 0 });
+Amod.STATE.layers.sc.coverage = 0.85;
+const stHighCov = win.Physics.fieldStats({ z: 1.0, N: 12, time: 0 });
+ok(stHighCov.coverage > stLowCov.coverage && stHighCov.opticalDepth > stLowCov.opticalDepth * 1.5,
+  '云层覆盖率 coverage 从 0.25 增至 0.85 时，三维/二维云场覆盖率与光学厚度单调递增',
+  `cov: ${stLowCov.coverage.toFixed(1)}% → ${stHighCov.coverage.toFixed(1)}%, τ: ${stLowCov.opticalDepth.toFixed(2)} → ${stHighCov.opticalDepth.toFixed(2)}`);
 
 Amod.deserialize(snapBefore9);
 

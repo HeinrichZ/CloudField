@@ -1,4 +1,4 @@
-/* phases.js — 相态分档与气溶胶（#5）
+/* phases.js — 相态分档与气溶胶
  * 提供相态预设、归一化与元数据，供 GUI 与物理层使用。
  * 相态为"质量分数"，内部在 Physics.phaseFractions() 中按总和归一。
  */

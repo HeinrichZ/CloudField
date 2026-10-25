@@ -93,7 +93,7 @@
       glaciationEff: 0.85,    // WBF 水汽竞争冰化沉降对液水消光的削减效率 (0–0.95)
     },
 
-    // —— 粒子谱描述（#4）：Gamma / 对数正态 / 实测谱 ——
+    // —— 粒子谱描述：Gamma / 对数正态 / 实测谱 ——
     spectrum: {
       type: 'gamma',          // gamma | lognormal | measured
       re: 8.0,                // Gamma/对数正态 有效半径 (µm)
@@ -104,13 +104,13 @@
       measured: null,         // 实测谱：[{r:µm, dNdlnr:cm⁻³}] 或 null
     },
 
-    // —— 相态分档（#5）：质量分数（内部按总和归一）——
+    // —— 相态分档：质量分数（内部按总和归一）——
     phases: { water: 1, ice: 0, snow: 0, graupel: 0, hail: 0 },
 
-    // —— 气溶胶背景消光（#5）——
+    // —— 气溶胶背景消光 ——
     aerosol: { on: false, beta0: 1.0e-4, scaleH: 1.5, omega: 0.92 },
 
-    // —— 观测算子开关（#3）——
+    // —— 观测算子开关 ——
     operators: {
       visibility: true, extSplit: false, irradiance: true,
       albedo: true, satellite: true, lidar: true, radar: true,
@@ -201,9 +201,7 @@
     const w = 0.15 + 3.5 * (Math.max(0, STATE.convection || 0) / 100);      // 特征云底上升气流速度 m/s
     const wPow = Math.pow(w, 0.45);
     const Nc = (Na * wPow) / (wPow + 0.045 * Math.pow(Na, 0.60));
-    const res = Math.round(Math.min(1500, Math.max(20, Nc)));
-    m.dropConc = res;
-    return res;
+    return Math.round(Math.min(1500, Math.max(20, Nc)));
   }
 
   // 温度自适应或手动统一的冰相比例（打通 micro.iceFrac 与 phases.ice）
@@ -229,11 +227,15 @@
     const vWeight = Math.exp(-Math.pow(dz / 0.55, 2));
 
     const T = tempAt(z);
-    const thresh = sd.agent === 'co2' ? -0.5 : -4.0;
+    // 暖云物理硬约束：T ≥ 0°C 时水汽对冰无过饱和（Δe_wi = 0），冰晶融化，不发生 WBF 冰化消云
+    if (T >= 0) return { depletion: 0, iceBoost: 0 };
+    const agent = String(sd.agent || 'agi').toLowerCase();
+    const thresh = agent === 'co2' ? -0.5 : -5.0;
     const wbf = wbfVaporDiff(T);
     const tFactor = T <= thresh
       ? Math.min(1.15, 0.72 + 0.43 * wbf.normFactor)
-      : (T < 0 ? 0.55 + 0.30 * wbf.normFactor : 0.60);
+      : (agent === 'co2' ? (0.45 + 0.30 * wbf.normFactor) : Math.max(0, ((thresh - T + 5.0) / 5.0) * 0.35 * wbf.normFactor));
+    if (tFactor <= 0) return { depletion: 0, iceBoost: 0 };
 
     const goRad = ((STATE.windDir || 270) + 180) * Math.PI / 180;
     const ux = Math.sin(goRad), uy = Math.cos(goRad);
@@ -292,18 +294,39 @@
     });
   }
 
-  // ============ 密度场采样（与着色器保持一致）============
-  function hash3(x, y, z) {
-    let h = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453;
-    return h - Math.floor(h);
+  // ============ 密度场采样（与 3D 着色器严格同源的三维连续值噪声）============
+  function fract(x) { return x - Math.floor(x); }
+  function hash3(px, py, pz) {
+    px = fract(px * 0.3183099 + 0.1);
+    py = fract(py * 0.3183099 + 0.1);
+    pz = fract(pz * 0.3183099 + 0.1);
+    px *= 17.0; py *= 17.0; pz *= 17.0;
+    return fract(px * py * pz * (px + py + pz));
+  }
+  function vnoise(x, y, z) {
+    const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
+    let fx = x - ix, fy = y - iy, fz = z - iz;
+    fx = fx * fx * (3.0 - 2.0 * fx);
+    fy = fy * fy * (3.0 - 2.0 * fy);
+    fz = fz * fz * (3.0 - 2.0 * fz);
+    const c000 = hash3(ix, iy, iz),         c100 = hash3(ix + 1, iy, iz);
+    const c010 = hash3(ix, iy + 1, iz),     c110 = hash3(ix + 1, iy + 1, iz);
+    const c001 = hash3(ix, iy, iz + 1),     c101 = hash3(ix + 1, iy, iz + 1);
+    const c011 = hash3(ix, iy + 1, iz + 1), c111 = hash3(ix + 1, iy + 1, iz + 1);
+    return ((c000 * (1 - fx) + c100 * fx) * (1 - fy) + (c010 * (1 - fx) + c110 * fx) * fy) * (1 - fz)
+         + ((c001 * (1 - fx) + c101 * fx) * (1 - fy) + (c011 * (1 - fx) + c111 * fx) * fy) * fz;
   }
   function fbm(x, y, z) {
-    let f = 0, a = 0.5, s = 1;
-    for (let i = 0; i < 4; i++) {
-      f += a * (hash3(x * s, y * s, z * s) - 0.5);
-      s *= 2.03; a *= 0.5;
+    let a = 0.5, s = 0.0;
+    for (let i = 0; i < 5; i++) {
+      s += a * vnoise(x, y, z);
+      x *= 2.03; y *= 2.03; z *= 2.03; a *= 0.5;
     }
-    return f;
+    return s;
+  }
+  function smoothstep2(a, b, x) {
+    const t = Math.max(0.0, Math.min(1.0, (x - a) / (b - a)));
+    return t * t * (3.0 - 2.0 * t);
   }
   function sampleFields(x, y, z, layers, wind, time) {
     const wDir = (wind && wind.dir != null) ? wind.dir : 270;
@@ -313,26 +336,30 @@
     const wx = Math.sin(goRad) * wSpd * WIND_SCALE;
     const wz = Math.cos(goRad) * wSpd * WIND_SCALE;
     const t = time || 0;
-    const px = x - wx * t, py = y - wz * t;
+    const px = x - wx * t, pz = y - wz * t;
     let density = 0, lwc = 0;
     for (let i = 0; i < layers.length; i++) {
       const L = layers[i];
-      if (z < L.base || z > L.top) continue;
-      const invThick = L.invThick || (1 / Math.max(0.05, L.top - L.base));
-      const invScale = L.invScale || (1 / Math.max(0.02, L.scale));
-      const keyOff = L.keyOffset != null ? L.keyOffset : (L.key.length * 13.0);
-      const h = (z - L.base) * invThick;
-      const hd = (h - 0.5) * 2.4;
-      const vfall = Math.exp(-hd * hd * 1.6);
-      const cov = L.coverage;
-      const sx = px * invScale + keyOff;
-      const sy = py * invScale * 0.6;
-      const sz = z * invScale;
-      const n = fbm(sx, sy, sz);
-      const n2 = fbm(sx * 2.1 + 5.0, sy * 2.1, sz * 2.1) * L.detail;
-      let d = (0.5 + n + n2 * 0.5);
-      d = Math.max(0, d - (1 - cov) * 1.4);
-      d *= vfall * L.density;
+      if (L.density < 0.001 || z < L.base || z > L.top) continue;
+      const h = (z - L.base) / Math.max(0.001, L.top - L.base);
+      const ty = L.type != null ? L.type : LAYER_ORDER.indexOf(L.key);
+      let peak = 0.5, w = 1.0;
+      if (ty < 0.5) { peak = 0.75; w = 0.7; }
+      else if (ty < 1.5) { peak = 0.5; w = 1.0; }
+      else if (ty < 2.5) { peak = 0.4; w = 1.6; }
+      else if (ty < 3.5) { peak = 0.32; w = 1.3; }
+      else { peak = 0.4; w = 1.1; }
+      const d2 = (h - peak) * 2.0;
+      const vfall = Math.exp(-d2 * d2 * w);
+      const sc = Math.max(0.02, L.scale || 0.10);
+      const det = L.detail != null ? L.detail : 0.5;
+      const nx = px * sc + ty * 13.7 + 3.1, ny = (z * 0.5) * sc, nz = pz * sc + ty * 7.3 + 5.7;
+      let n = fbm(nx, ny, nz);
+      n += det * (fbm(nx * 3.1, ny * 3.1, nz * 3.1) - 0.5) * 0.6;
+      n = Math.max(0.0, Math.min(1.0, n));
+      const thresh = 0.76 - L.coverage * 0.55;
+      const cov = smoothstep2(thresh - 0.09, thresh + 0.09, n) * (0.65 + 0.35 * n);
+      const d = cov * L.density * vfall;
       if (d > 0) {
         density += d;
         const lwcLayer = (d < 1 ? d : 1) * LWC_MAX * (L.kind === 'ice' ? 0.4 : 1.0);

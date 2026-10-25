@@ -52,16 +52,16 @@
    - 特点：无硬性阈值 $q_{c0}$，直接建立云滴数浓度 $N_c$ 对暖雨启动的幂律抑制（$N_c$ 越高，水汽被更多云滴平摊，单滴难以长到雨滴尺度，降水率显著下降）。
 
 3. **Seifert & Beheng (2006) / ICON-LES 双矩谱宽耦合方案（`sb06`）**
-   - 自动转化率：引入内禀时间尺度比 $\tau = \frac{q_r}{q_c + q_r} \in [10^{-6}, 0.99]$ 的普适加速函数 $\Phi_{au}(\tau) = 600 \cdot \tau^{0.68} (1 - \tau^{0.68})^3$，以及粒子谱有效方差 $\nu_{\text{eff}}$ 决定的 Gamma 形状参数 $\nu = \frac{1}{\nu_{\text{eff}}} - 3$，谱宽越宽自动转化越快。
+   - 自动转化率：引入内禀时间尺度比 $\tau = \frac{q_r}{q_c + q_r} \in [10^{-6}, 0.99]$ 的普适加速函数 $\Phi_{au}(\tau) = 600 \cdot \tau^{0.68} (1 - \tau^{0.68})^3$，以及由半径有效方差 $\nu_{\text{eff}}$ 换算的质量分布形状参数 $\nu_m = \frac{1/\nu_{\text{eff}} - 5}{3} \in [0, 4]$，谱宽越宽自动转化越快。
    - 碰并收集率：`P_gr = k_{cc} · \rho · q_c · q_r · (\frac{\tau}{\tau + 5\times 10^{-4}})^4`。
 
 4. **ETH CLOUDLAB 过冷层云催化播云（Wegener–Bergeron–Findeisen 两阶段冰化羽流）**
-   - 物理机制：在过冷云层（$T < 0^\circ\text{C}$）点源播撒人工冰核（`AgI` 碘化银成核阈值 $-4^\circ\text{C}$；液态 $\text{CO}_2$ 均质冻结阈值 $-0.5^\circ\text{C}$）。按 Murphy & Koop (2005) / Bolton 公式计算过冷水面与冰面饱和水汽压差 $\Delta e_{wi}(T) = e_{s,w}(T) - e_{s,i}(T)$ 及冰面过饱和度 $S_i(T) = (e_{s,w} - e_{s,i}) / e_{s,i}$（在 $-12.5^\circ\text{C}$ 达极大值 $\approx 0.268\text{ hPa}$），驱动 **WBF 水汽竞争过程**（`wbfRate` 与 `seedingPlumeAt`）。
+   - 物理机制：在过冷云层（$T(z) < 0^\circ\text{C}$ 硬性物理门控；暖云 $T \ge 0^\circ\text{C}$ 时冰晶融化、WBF 速率与消云量恒为 0）点源播撒人工冰核（`AgI` 碘化银成核阈值 $-5.0^\circ\text{C}$；液态 $\text{CO}_2$ 均质冻结阈值 $-0.5^\circ\text{C}$）。按 Murphy & Koop (2005) / Bolton 公式计算过冷水面与冰面饱和水汽压差 $\Delta e_{wi}(T) = e_{s,w}(T) - e_{s,i}(T)$ 及冰面过饱和度 $S_i(T) = (e_{s,w} - e_{s,i}) / e_{s,i}$（在 $-12.5^\circ\text{C}$ 达极大值 $\approx 0.268\text{ hPa}$），驱动 **WBF 水汽竞争过程**（`wbfRate` 与 `seedingPlumeAt`）。
    - 两阶段空间演变：`Atmosphere.seedingPlumeAt(x, y, z)` 区分近源端（$0\sim 2.5\text{ km}$，过冷水向新生柱状/板状冰晶转化，`iceBoost` 抬升冰相占比与激光雷达退偏色比，保留 $35\%$ 冰晶散射过渡）与中远端（$>2.5\text{ km}$，雪晶聚合沉降形成高能见度消云沟槽），并在 `Physics.seedingDiagnostics()` 中输出背景云与沟槽内的能见度增益倍数、$\Delta e_{wi}$、$S_i$ 及跑道 CAT-I（$\ge 550\text{ m}$）恢复判据。
 
 5. **气溶胶-云滴数浓度活化耦合（CCN Activation）与云辐射效应诊断**
-   - 开启 `micro.ccnCoupled` 时，`Atmosphere.operativeDropConc()` 按 Twomey / Abdul-Razzak 关系将气溶胶消光 `aerosol.beta0` 与对流上升速度 $w$ 耦合为活化云滴数浓度 $N_c$。
-   - `Operators.compute()` 诊断柱积分液水路径 $\text{LWP}$、冰水路径 $\text{IWP}$、总水路径 $\text{TWP}$（$\text{g m}^{-2}$），以及短波云辐射效应 $\text{CRE}_{\text{SW}}$ 与相对清洁大陆基线（$N_0 = 80\text{ cm}^{-3}$）的 Twomey 第一间接强迫 $\Delta F_{\text{Twomey}}$（$\text{W m}^{-2}$）。
+   - 开启 `micro.ccnCoupled` 时，`Atmosphere.operativeDropConc()` 按 Twomey / Abdul-Razzak 关系将气溶胶消光 `aerosol.beta0` 与对流上升速度 $w$ 无副作用地诊断为活化云滴数浓度 $N_c$（不覆写用户滑块基准值 `STATE.micro.dropConc`）。
+   - `Operators.compute()` 分离純云光学厚度 $\tau_{\text{cloud}}$ 与气溶胶光厚，诊断柱积分液水路径 $\text{LWP}$、冰水路径 $\text{IWP}$、总水路径 $\text{TWP}$（$\text{g m}^{-2}$），并基于双流地表多次反射耦合行星反照率 $\alpha_{\text{all}} = R_c + \frac{T_c^2 \alpha_s}{1 - R_c \alpha_s}$ 计算短波云辐射效应 $\text{CRE}_{\text{SW}}$ 与相对清洁大陆基线（$N_0 = 80\text{ cm}^{-3}$）的 Twomey 第一间接强迫 $\Delta F_{\text{Twomey}}$（$\text{W m}^{-2}$）。
 
 | 参数 | 当前值 | 对应方案参数 / 物理含义 |
 |---|---|---|

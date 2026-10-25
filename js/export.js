@@ -1,4 +1,4 @@
-/* export.js — 业务系统与大涡模拟前处理输出（#8 + ICON-LES / ETH CLOUDLAB 前处理配置）
+/* export.js — 业务系统与大涡模拟前处理输出（ICON-LES / ETH CLOUDLAB 前处理配置）
  * 把诊断结果导出为标准行业报文与数值模式前处理配置：
  *   1) METAR/AVMET 文本、IWXXM XML、BUFR / GRIB 等效字段集
  *   2) ICON-LES / WRF Fortran Namelist (.nml) 微物理与播云前处理配置块
@@ -22,33 +22,46 @@
     return { vis: w.vis, alt: w.alt, cover, ops, re: info.re != null ? info.re : A.operativeRe(0), lwc: info.lwc || 0 };
   }
 
-  // —— METAR / AVMET 文本 ——
+  // —— METAR / AVMET 文本（符合 ICAO Annex 3 云量 FEW/SCT/BKN/OVC、百英尺云底高与节风速编码）——
   function toMETAR(opts) {
+    if (typeof opts === 'string') opts = { station: opts };
     opts = opts || {};
     const r = readouts();
-    const vis = isFinite(r.vis) ? Math.min(9999, Math.round(r.vis)) : 9999;
-    const wdir = pad(S.windDir, 3), wspd = pad(S.windSpeed, 2);
-    const T = Math.round(S.surfaceTemp), Td = Math.round(A.dewAt(0));
+    const vis = isFinite(r.vis) ? Math.min(9999, Math.max(50, Math.round(r.vis / 50) * 50)) : 9999;
+    const wdir = pad(Math.round((S.windDir || 0) / 10) * 10, 3);
+    const wspdKt = pad(Math.min(99, Math.round((S.windSpeed || 0) * 1.94384)), 2);
+    const T = Math.round(A.tempAt(0)), Td = Math.round(A.dewAt(0));
     const dd = (Td < 0 ? 'M' + pad(-Td, 2) : pad(Td, 2));
     const TT = (T < 0 ? 'M' + pad(-T, 2) : pad(T, 2));
-    const clouds = A.LAYER_ORDER.filter(k => S.layers[k].on && S.layers[k].coverage > 0.02)
-      .map(k => k.toUpperCase() + (S.layers[k].base * 100).toFixed(0)).join(' ');
-    return (opts.station || 'ZCCC') + ' ' + (opts.time || '241200Z') + ' ' +
-      wdir + wspd + 'KT ' + (vis === 9999 ? '9999' : pad(vis, 4)) + ' ' +
-      'SKC ' + (clouds || 'NSC') + ' ' + TT + '/' + dd + ' ' +
-      'Q' + pad(S.surfacePressure, 4) + ' ' + (opts.remark || ('VIScalc=' + (isFinite(r.vis) ? r.vis.toFixed(0) + 'm' : 'NA') + ' COV=' + r.cover.toFixed(0) + '%'));
+    const now = new Date();
+    const timeStr = opts.time || (pad(now.getUTCDate(), 2) + pad(now.getUTCHours(), 2) + pad(now.getUTCMinutes(), 2) + 'Z');
+    const eff = A.effectiveLayers().slice().sort((a, b) => a.base - b.base);
+    const cloudGrps = [];
+    eff.forEach(L => {
+      if (L.coverage < 0.05 || L.density < 0.05) return;
+      const covCode = L.coverage < 0.25 ? 'FEW' : (L.coverage < 0.50 ? 'SCT' : (L.coverage < 0.875 ? 'BKN' : 'OVC'));
+      const hft = pad(Math.max(1, Math.round((L.base * 1000) / 30.48)), 3);
+      const suffix = L.key === 'cb' ? 'CB' : (L.key === 'cu' && (L.top - L.base) >= 3.0 ? 'TCU' : '');
+      cloudGrps.push(covCode + hft + suffix);
+    });
+    const cldStr = cloudGrps.length ? cloudGrps.join(' ') : 'NSC';
+    return 'METAR ' + (opts.station || 'ZCCC') + ' ' + timeStr + ' ' +
+      wdir + wspdKt + 'KT ' + (vis === 9999 ? '9999' : pad(vis, 4)) + ' ' +
+      cldStr + ' ' + TT + '/' + dd + ' ' +
+      'Q' + pad(S.surfacePressure, 4) + ' RMK ' + (opts.remark || ('VIScalc=' + (isFinite(r.vis) ? r.vis.toFixed(0) + 'm' : 'NA') + ' COV=' + r.cover.toFixed(0) + '%'));
   }
 
   // —— IWXXM XML（航空气象信息交换模型，简化可读版）——
   function toIWXXM(opts) {
     opts = opts || {};
     const r = readouts();
+    const isoNow = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
     return '<?xml version="1.0" encoding="UTF-8"?>\n' +
       '<Metar xmlns="http://www.wmo.int/IWXXM" permissibleUsage="OPERATIONAL">\n' +
-      '  <observingTime>' + (opts.time || '2026-10-24T12:00:00Z') + '</observingTime>\n' +
+      '  <observingTime>' + (opts.time || isoNow) + '</observingTime>\n' +
       '  <station>' + (opts.station || 'ZCCC') + '</station>\n' +
       '  <visibility uom="m">' + (isFinite(r.vis) ? Math.round(r.vis) : 9999) + '</visibility>\n' +
-      '  <airTemperature uom="degC">' + S.surfaceTemp.toFixed(1) + '</airTemperature>\n' +
+      '  <airTemperature uom="degC">' + A.tempAt(0).toFixed(1) + '</airTemperature>\n' +
       '  <dewpointTemperature uom="degC">' + A.dewAt(0).toFixed(1) + '</dewpointTemperature>\n' +
       '  <qnh uom="hPa">' + S.surfacePressure.toFixed(0) + '</qnh>\n' +
       '  <totalCloudCover uom="percent">' + r.cover.toFixed(0) + '</totalCloudCover>\n' +
@@ -67,7 +80,7 @@
         { f: 'windDirection', u: 'deg', v: S.windDir },
         { f: 'windSpeed', u: 'm/s', v: S.windSpeed },
         { f: 'visibility', u: 'm', v: isFinite(r.vis) ? Math.round(r.vis) : 9999 },
-        { f: 'airTemperature', u: 'degC', v: S.surfaceTemp },
+        { f: 'airTemperature', u: 'degC', v: Number(A.tempAt(0).toFixed(2)) },
         { f: 'dewpoint', u: 'degC', v: Number(A.dewAt(0).toFixed(2)) },
         { f: 'pressure', u: 'hPa', v: S.surfacePressure },
         { f: 'cloudCover', u: '%', v: r.cover.toFixed(0) },
@@ -78,6 +91,7 @@
   }
   function toGRIB() {
     const r = readouts();
+    const effN = A.operativeDropConc ? A.operativeDropConc() : S.micro.dropConc;
     return {
       schema: 'GRIB2-equivalent fields (binary encoding requires GRIB2 template)',
       discipline: 0, parameter: 'visibility',
@@ -86,7 +100,7 @@
         { f: 'totalCloudCover', u: '%', v: r.cover.toFixed(0) },
         { f: 'cloudOpticalDepth', v: r.ops.opticalDepth.toFixed(3) },
         { f: 'effectiveRadius', u: 'um', v: Number(r.re).toFixed(2) },
-        { f: 'dropConc', u: 'cm-3', v: S.micro.dropConc.toFixed(0) },
+        { f: 'dropConc', u: 'cm-3', v: Number(effN).toFixed(0) },
       ],
     };
   }
@@ -97,8 +111,9 @@
     const sd = S.seeding || {};
     const sp = S.spectrum || {};
     const effVeff = (P && P.currentVeff) ? P.currentVeff() : (sp.veff || 0.10);
+    const effN = A.operativeDropConc ? A.operativeDropConc() : (m.dropConc || 300);
     const schemeId = m.scheme === 'sb06' ? 4 : (m.scheme === 'kk2000' ? 3 : 1);
-    const nuShape = Math.max(0, Math.min(4, (1 / Math.max(0.05, effVeff)) - 3));
+    const nuShape = Math.max(0, Math.min(4, ((1 / Math.max(0.03, effVeff)) - 5) / 3));
     return [
       '! ==========================================================================',
       '! CloudField Pre-processor Namelist for ICON-LES / 2-Moment Microphysics',
@@ -107,10 +122,10 @@
       '&microphysics_nml',
       '  inwp_gscp          = ' + schemeId + ',              ! 1=Kessler(1-mom), 3=KK2000(2-mom), 4=SB06(ICON 2-mom)',
       '  scheme_name        = "' + (m.scheme || 'kessler') + '",',
-      '  qnc_const          = ' + (m.dropConc * 1e6).toExponential(3) + ',     ! Cloud droplet number conc. N_c [m^-3]',
+      '  qnc_const          = ' + (effN * 1e6).toExponential(3) + ',     ! Cloud droplet number conc. N_c [m^-3]',
       '  re_fixed_um        = ' + Number(m.effRadiusUm).toFixed(2) + ',          ! Reference effective radius [um]',
       '  re_mode            = "' + (m.reMode || 'derived') + '",',
-      '  nu_c_shape         = ' + nuShape.toFixed(2) + ',          ! Gamma shape parameter from v_eff=' + Number(effVeff).toFixed(2),
+      '  nu_c_shape         = ' + nuShape.toFixed(2) + ',          ! Mass Gamma shape parameter from v_eff=' + Number(effVeff).toFixed(2),
       '  k_autoconv         = ' + Number(m.autoConvK).toExponential(3) + ',     ! Autoconversion rate coeff k1 [s^-1]',
       '  qc0_threshold      = ' + Number(m.autoConvQc0).toExponential(3) + ',     ! Critical cloud water mixing ratio [kg/kg]',
       '  k_accretion        = ' + Number(m.accretK).toFixed(2) + ',          ! Accretion coeff k2',
@@ -119,7 +134,7 @@
       '',
       '&cloudlab_seeding_nml',
       '  l_seeding_active   = .' + (sd.on ? 'TRUE' : 'FALSE') + '.,       ! Glaciogenic cloud seeding (WBF process)',
-      '  seeding_agent      = "' + (sd.agent || 'agi').toUpperCase() + '",          ! AGI (AgI, T<=-4C) or CO2 (Liquid CO2, T<=-0.5C)',
+      '  seeding_agent      = "' + (sd.agent || 'agi').toUpperCase() + '",          ! AGI (AgI, T<=-5C) or CO2 (Liquid CO2, T<=-0.5C)',
       '  ninp_seed_liter    = ' + Number(sd.inpConc || 80).toFixed(1) + ',          ! Seeded INP concentration [L^-1]',
       '  seed_x0_km         = ' + Number(sd.x0 != null ? sd.x0 : -8.0).toFixed(2) + ',',
       '  seed_z_alt_km      = ' + Number(sd.alt != null ? sd.alt : 1.1).toFixed(2) + ',',
@@ -129,7 +144,7 @@
       '/',
       '',
       '&sounding_init_nml',
-      '  t_sfc_degc         = ' + Number(S.surfaceTemp).toFixed(2) + ',',
+      '  t_sfc_degc         = ' + Number(A.tempAt(0)).toFixed(2) + ',',
       '  p_sfc_hpa          = ' + Number(S.surfacePressure).toFixed(1) + ',',
       '  rh_sfc_pct         = ' + Number(S.surfaceRH).toFixed(1) + ',',
       '  lapse_rate_k_km    = ' + Number(S.lapseRate).toFixed(2) + ',',
@@ -221,15 +236,16 @@
   function toSchemeCSV(opts) {
     if (!global.Kessler || !global.Kessler.compareSchemes) return 'N_cm3,R_kessler_mmh,R_kk2000_mmh,R_sb06_mmh\n';
     const cmp = global.Kessler.compareSchemes(opts);
-    const qc = cmp.qc || 1.2e-3;
-    const qr = 1.0e-4;
+    const qc = cmp.qcRef != null ? cmp.qcRef : 1.5e-3;
+    const qr = cmp.qrRef != null ? cmp.qrRef : 0;
+    const rho = cmp.rho != null ? cmp.rho : 1.05;
     const header = 'N_cm3,R_kessler_mmh,R_kk2000_mmh,R_sb06_mmh,Pac_kessler_s1,Pac_kk2000_s1,Pac_sb06_s1';
     const lines = [header];
     for (let i = 0; i < cmp.N.length; i++) {
       const nv = cmp.N[i];
-      const rK = global.Kessler.ratesForScheme('kessler', qc, qr, { N: nv });
-      const rKK = global.Kessler.ratesForScheme('kk2000', qc, qr, { N: nv });
-      const rSB = global.Kessler.ratesForScheme('sb06', qc, qr, { N: nv, rho: 1.0 });
+      const rK = global.Kessler.ratesForScheme('kessler', qc, qr, { N: nv, rho });
+      const rKK = global.Kessler.ratesForScheme('kk2000', qc, qr, { N: nv, rho });
+      const rSB = global.Kessler.ratesForScheme('sb06', qc, qr, { N: nv, rho });
       lines.push([
         nv.toFixed(1),
         cmp.kessler[i].toFixed(4),

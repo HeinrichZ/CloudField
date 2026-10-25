@@ -33,7 +33,7 @@ const MAX_ALT = A.MAX_ALT;
 const S = A.STATE;
 const layers = A.effectiveLayers();
 const dir = (S.windDir + 180) * Math.PI / 180;
-const sp = S.windSpeed * 0.0009;
+const sp = S.windSpeed * (A.WIND_SCALE || 0.01);
 const WX = Math.sin(dir) * sp, WZ = Math.cos(dir) * sp;   // 与 render() 一致
 const UTIME = 90;                                          // 截图像素时刻的估计值
 
@@ -68,12 +68,13 @@ function layerDensity(px, py, pz, L) {
   const d2 = (h - peak) * 2;
   const vfall = Math.exp(-d2 * d2 * w);
   const sc = L.scale, det = L.detail;
-  const nx = px + WX * UTIME, ny = py * 0.5 + WZ * UTIME * 0.3, nz = pz + WZ * UTIME;
-  const qx = nx * sc, qy = ny * sc, qz = nz * sc;
+  const nx = px - WX * UTIME, ny = py * 0.5, nz = pz - WZ * UTIME;
+  const qx = nx * sc + L.type * 13.7 + 3.1, qy = ny * sc, qz = nz * sc + L.type * 7.3 + 5.7;
   let n = fbm(qx, qy, qz);
   n += det * (fbm(qx * 3.1, qy * 3.1, qz * 3.1) - 0.5) * 0.6;
   n = Math.max(0, Math.min(1, n));
-  const cov = smoothstep2(L.coverage - 0.09, L.coverage + 0.09, n);
+  const thresh = 0.76 - L.coverage * 0.55;
+  const cov = smoothstep2(thresh - 0.09, thresh + 0.09, n) * (0.65 + 0.35 * n);
   return cov * L.density * vfall;
 }
 function totalDensity(px, py, pz) {
@@ -98,7 +99,7 @@ const occDil = (() => {
 //       'fix' = 修复后（噪声空间 + 连续步长 + 已膨胀）
 function sampleOcc(px, py, pz, mode) {
   let qx = px, qy = py, qz = pz;
-  if (mode === 'fix') { qx = px + WX * UTIME; qy = py + WZ * UTIME * 0.6; qz = pz + WZ * UTIME; }
+  if (mode === 'fix') { qx = px - WX * UTIME; qy = py; qz = pz - WZ * UTIME; }
   const nx = (qx + OCC_DOM * 0.5) / OCC_DOM, ny = qy / MAX_ALT, nz = (qz + OCC_DOM * 0.5) / OCC_DOM;
   if (nx < 0 || nx > 1 || ny < 0 || ny > 1 || nz < 0 || nz > 1) return 1.0;
   const i = Math.min(OCC_DIM - 1, Math.floor(nx * OCC_DIM));

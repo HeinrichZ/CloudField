@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""cloudfield_sdk.py — CloudField Python SDK（#10）
+"""cloudfield_sdk.py — CloudField Python SDK
 
 轻量封装：把批量诊断请求交给 Node CLI 执行，返回结构化结果。
 依赖：本机已安装 Node，且 CloudField 仓库根目录在 CLOUDFIELD_ROOT 下。
@@ -15,10 +15,12 @@
         print(r["station"], r["t"], r["vis"], r["cover"])
 """
 from __future__ import annotations
+import csv
+import io
 import json
 import os
 import subprocess
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 DEFAULT_ROOT_GUESSES = [
     os.path.join(os.path.dirname(__file__), ".."),
@@ -41,23 +43,46 @@ class CloudFieldSDK:
                 return os.path.abspath(g)
         return os.getcwd()
 
+    @staticmethod
+    def _parse_output(out: str, fmt: str) -> Union[List[Dict[str, Any]], str]:
+        if fmt == "json":
+            return json.loads(out)["rows"]
+        if fmt == "csv":
+            reader = csv.DictReader(io.StringIO(out.strip()))
+            return list(reader)
+        return out
+
     def batch(self, stations: List[Dict[str, Any]], times: List[float],
-              fmt: str = "json") -> List[Dict[str, Any]]:
-        """批量诊断：机场列表 × 时次。返回结果行列表。"""
+              fmt: str = "json") -> Union[List[Dict[str, Any]], str]:
+        """批量诊断：机场列表 × 时次。返回结果行列表（或指定格式文本）。"""
         stations_file = self._write_temp(json.dumps(stations, ensure_ascii=False))
-        cmd = [self.node, self.cli, "--stations", stations_file,
-               "--times", ",".join(str(t) for t in times), "--format", fmt]
-        out = subprocess.check_output(cmd, text=True)
-        return json.loads(out)["rows"]
+        try:
+            cmd = [self.node, self.cli, "--stations", stations_file,
+                   "--times", ",".join(str(t) for t in times), "--format", fmt]
+            out = subprocess.check_output(cmd, text=True, encoding="utf-8")
+            return self._parse_output(out, fmt)
+        finally:
+            try:
+                if os.path.exists(stations_file):
+                    os.remove(stations_file)
+            except OSError:
+                pass
 
     def run_steps(self, stations: List[Dict[str, Any]], steps_file: str,
-                 fmt: str = "json") -> List[Dict[str, Any]]:
+                  fmt: str = "json") -> Union[List[Dict[str, Any]], str]:
         """按时序文件（时序 CSV）批量诊断。"""
         stations_file = self._write_temp(json.dumps(stations, ensure_ascii=False))
-        cmd = [self.node, self.cli, "--stations", stations_file,
-               "--steps", steps_file, "--format", fmt]
-        out = subprocess.check_output(cmd, text=True)
-        return json.loads(out)["rows"]
+        try:
+            cmd = [self.node, self.cli, "--stations", stations_file,
+                   "--steps", steps_file, "--format", fmt]
+            out = subprocess.check_output(cmd, text=True, encoding="utf-8")
+            return self._parse_output(out, fmt)
+        finally:
+            try:
+                if os.path.exists(stations_file):
+                    os.remove(stations_file)
+            except OSError:
+                pass
 
     @staticmethod
     def _write_temp(text: str) -> str:

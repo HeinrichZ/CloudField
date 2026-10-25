@@ -1,4 +1,4 @@
-/* report.js — 协作与分享（#12）
+/* report.js — 协作与分享
  * 一键导出诊断报告（自包含 HTML）、截图标注、分享链接（状态编码进 URL hash）。
  */
 (function (global) {

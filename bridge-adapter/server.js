@@ -74,12 +74,33 @@ function metarToScene(r) {
   return sc;
 }
 
-// ============ 会话存储（内存 + 落盘到 ./sessions）============
+// ============ 会话存储（内存 + 落盘到 ./sessions，含路径清洗防遍历）============
 const SESSIONS_DIR = path.join(__dirname, 'sessions');
+const MAX_PAYLOAD_BYTES = 2 * 1024 * 1024; // 2 MB 请求体与 WebSocket 帧上限
 try { fs.mkdirSync(SESSIONS_DIR, { recursive: true }); } catch (_) {}
 const sessions = {};
-fs.readdirSync(SESSIONS_DIR).forEach(f => { if (f.endsWith('.json')) { try { sessions[f.replace(/\.json$/, '')] = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, f), 'utf8')); } catch (_) {} } });
-function saveSession(s) { sessions[s.sessionId] = s; fs.writeFileSync(path.join(SESSIONS_DIR, s.sessionId + '.json'), JSON.stringify(s, null, 2)); }
+function safeSessionId(id) {
+  const clean = String(id || 'session').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+  return clean || 'session';
+}
+fs.readdirSync(SESSIONS_DIR).forEach(f => {
+  if (f.endsWith('.json')) {
+    try {
+      const sid = safeSessionId(f.replace(/\.json$/, ''));
+      sessions[sid] = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, f), 'utf8'));
+    } catch (_) {}
+  }
+});
+function saveSession(s) {
+  const sid = safeSessionId(s && s.sessionId);
+  s.sessionId = sid;
+  sessions[sid] = s;
+  const target = path.resolve(SESSIONS_DIR, sid + '.json');
+  if (!target.startsWith(path.resolve(SESSIONS_DIR) + path.sep)) {
+    throw new Error('illegal session path');
+  }
+  fs.writeFileSync(target, JSON.stringify(s, null, 2));
+}
 
 // ============ WebSocket（手写最小 RFC6455）============
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
@@ -137,6 +158,21 @@ function broadcast(msg, except) { const buf = encodeFrame(0x1, Buffer.from(JSON.
 
 // ============ HTTP / REST ============
 function sendJSON(res, code, obj) { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify(obj, null, 2)); }
+function readBody(req, res, onDone) {
+  let body = '', bytes = 0, aborted = false;
+  req.on('data', chunk => {
+    if (aborted) return;
+    bytes += chunk.length;
+    if (bytes > MAX_PAYLOAD_BYTES) {
+      aborted = true;
+      sendJSON(res, 413, { ok: false, error: 'Payload Too Large' });
+      req.destroy();
+      return;
+    }
+    body += chunk.toString('utf8');
+  });
+  req.on('end', () => { if (!aborted) onDone(body); });
+}
 
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://' + HOST + ':' + PORT);
@@ -145,28 +181,32 @@ const server = http.createServer((req, res) => {
   if (p === '/api/airports') return sendJSON(res, 200, { schemaVersion: '1.0', count: AIRPORTS.length, airports: AIRPORTS });
   if (p === '/api/schema') return sendJSON(res, 200, require('./schema'));
   if (p === '/api/metar' && req.method === 'POST') {
-    let body = ''; req.on('data', d => body += d); req.on('end', () => {
+    readBody(req, res, body => {
       try { const r = parseMetar(body); sendJSON(res, 200, { success: true, station: r.station, parsed: r, scene: metarToScene(r) }); }
       catch (e) { sendJSON(res, 400, { success: false, error: e.message }); }
     });
     return;
   }
   if (p === '/api/sessions' && req.method === 'POST') {
-    let body = ''; req.on('data', d => body += d); req.on('end', () => {
+    readBody(req, res, body => {
       try { const s = JSON.parse(body); saveSession(s); sendJSON(res, 201, { ok: true, sessionId: s.sessionId }); }
       catch (e) { sendJSON(res, 400, { ok: false, error: e.message }); }
     });
     return;
   }
   const sm = p.match(/^\/api\/sessions\/(.+)$/);
-  if (sm) { const id = sm[1]; return sendJSON(res, sessions[id] ? 200 : 404, sessions[id] || { error: 'not found' }); }
+  if (sm) {
+    const id = safeSessionId(decodeURIComponent(sm[1]));
+    return sendJSON(res, sessions[id] ? 200 : 404, sessions[id] || { error: 'not found' });
+  }
   if (p === '/api/sessions') return sendJSON(res, 200, { sessions: Object.keys(sessions) });
 
-  // —— 静态托管（可选，托管静态资源目录）——
+  // —— 静态托管（可选，托管静态资源目录，严格限制在 STATIC_DIR 根路径内）——
   if (STATIC_DIR) {
-    let fp = path.join(STATIC_DIR, p === '/' ? 'index.html' : p);
-    fp = path.normalize(fp);
-    if (fp.startsWith(path.normalize(STATIC_DIR)) && fs.existsSync(fp) && fs.statSync(fp).isFile()) {
+    const rootDir = path.resolve(STATIC_DIR);
+    const relPath = '.' + (p === '/' ? '/index.html' : p);
+    const fp = path.resolve(rootDir, relPath);
+    if ((fp === rootDir || fp.startsWith(rootDir + path.sep)) && fs.existsSync(fp) && fs.statSync(fp).isFile()) {
       const ext = path.extname(fp); const mime = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.webp': 'image/webp' }[ext] || 'application/octet-stream';
       res.writeHead(200, { 'Content-Type': mime }); fs.createReadStream(fp).pipe(res); return;
     }
@@ -188,6 +228,7 @@ server.on('upgrade', (req, socket) => {
 
   let buf = Buffer.alloc(0);
   socket.on('data', chunk => {
+    if (buf.length + chunk.length > MAX_PAYLOAD_BYTES) { socket.destroy(); clients.delete(socket); return; }
     buf = Buffer.concat([buf, chunk]);
     // 解析一个或多个帧
     while (buf.length >= 2) {
@@ -198,6 +239,7 @@ server.on('upgrade', (req, socket) => {
       let offset = 2;
       if (len === 126) { if (buf.length < 4) break; len = buf.readUInt16BE(2); offset = 4; }
       else if (len === 127) { if (buf.length < 10) break; const hi = buf.readUInt32BE(2), lo = buf.readUInt32BE(6); len = hi * 0x100000000 + lo; offset = 10; }
+      if (len > MAX_PAYLOAD_BYTES) { socket.destroy(); clients.delete(socket); return; }
       let maskKey;
       if (masked) { if (buf.length < offset + 4) break; maskKey = buf.slice(offset, offset + 4); offset += 4; }
       if (buf.length < offset + len) break;

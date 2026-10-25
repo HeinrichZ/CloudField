@@ -110,7 +110,7 @@
       case 'lwc': return f.lwc;
       case 'beta': return f.betaExt != null ? f.betaExt * 1000 : A.betaFromLWC(f.lwc, A.operativeRe(f.lwc));
       case 're': return f.reUm != null ? f.reUm : A.operativeRe(f.lwc);
-      case 'Nd': return S.micro.dropConc;
+      case 'Nd': return A.operativeDropConc ? A.operativeDropConc() : S.micro.dropConc;
       case 'temp': return f.temp;
       case 'pres': return f.pressure;
       default: return f.density;
@@ -440,7 +440,7 @@
     const re = det ? det.reUm : A.operativeRe(lwc);               // 与 β 共用同一 r_e 源
     const betaM = det ? det.betaExt : (A.betaFromLWC(lwc, re) / 1000); // m⁻¹（含米氏/相态/气溶胶）
     const betaKm = betaM * 1000;                                  // km⁻¹
-    const N = S.micro.dropConc;
+    const N = A.operativeDropConc ? A.operativeDropConc() : S.micro.dropConc;
     const veffNow = det ? det.veff : ((S.spectrum && S.spectrum.veff) || 0);
     const reDeriv = A.effRadiusFromLWC(lwc, N, veffNow);
     const kr = global.Kessler ? global.Kessler.readout() : null;
@@ -568,7 +568,7 @@
     updateDashboardReadout(timeSec);
   }
 
-  // ----------------- 高级面板绘图助手（路线图 #1/#2/#6/#9） -----------------
+  // ----------------- 高级面板绘图助手 -----------------
   // 能见度配色：低能见度（差）→ 红，高能见度（好）→ 蓝绿
   function visColor(v) {
     const lv = Math.log(Math.max(50, Math.min(99999, v)));

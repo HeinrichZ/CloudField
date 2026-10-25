@@ -26,10 +26,12 @@
     wrap.title = tip || '';
     const valId = 'v_' + Math.random().toString(36).slice(2);
     const fmtF = fmt || (x => x);
+    const minTxt = fmt ? fmtF(min) : min;
+    const maxTxt = fmt ? fmtF(max) : max;
     wrap.innerHTML =
       `<div class="row"><label>${label}</label><span class="val" id="${valId}"></span></div>` +
       `<input type="range" min="${min}" max="${max}" step="${step}" value="${get()}">` +
-      `<div class="range-hint">${I18N.t('ctrl.range')} ${min}–${max} ${unit || ''}</div>`;
+      `<div class="range-hint">${I18N.t('ctrl.range')} ${minTxt}–${maxTxt} ${unit || ''}</div>`;
     const input = wrap.querySelector('input');
     const val = wrap.querySelector('#' + valId);
     const show = () => { val.textContent = fmtF(get()) + (unit ? ' ' + unit : ''); };
@@ -124,12 +126,29 @@
       return ((a % 360) + 360) % 360;
     };
     const apply = (e) => { set(Math.round(angleAt(e))); show(); notifyChange(); };
-    dial.addEventListener('mousedown', (e) => { dragging = true; apply(e); e.preventDefault(); });
-    window.addEventListener('mousemove', (e) => { if (dragging) apply(e); });
-    window.addEventListener('mouseup', () => { dragging = false; });
-    dial.addEventListener('touchstart', (e) => { dragging = true; apply(e.touches[0]); e.preventDefault(); }, { passive: false });
-    window.addEventListener('touchmove', (e) => { if (dragging) { apply(e.touches[0]); e.preventDefault(); } }, { passive: false });
-    window.addEventListener('touchend', () => { dragging = false; });
+    const onMove = (e) => { if (dragging) apply(e); };
+    const onUp = () => {
+      dragging = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    const onTouchMove = (e) => { if (dragging && e.touches[0]) { apply(e.touches[0]); e.preventDefault(); } };
+    const onTouchEnd = () => {
+      dragging = false;
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+    };
+    dial.addEventListener('mousedown', (e) => {
+      dragging = true; apply(e); e.preventDefault();
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+    dial.addEventListener('touchstart', (e) => {
+      if (!e.touches[0]) return;
+      dragging = true; apply(e.touches[0]); e.preventDefault();
+      window.addEventListener('touchmove', onTouchMove, { passive: false });
+      window.addEventListener('touchend', onTouchEnd);
+    }, { passive: false });
     wrap._set = show;
     return wrap;
   }
@@ -149,8 +168,8 @@
   }
 
   function layerGroup(key) {
-    const topCtl = rangeCtrl(I18N.t('layer.top'), 1, 15, 0.1, U.U.alt(), () => S.layers[key].top, v => S.layers[key].top = v, x => x.toFixed(1), I18N.t('layer.top.tip'));
-    const baseCtl = rangeCtrl(I18N.t('layer.base'), 0, 12, 0.1, U.U.alt(), () => S.layers[key].base, v => S.layers[key].base = Math.min(v, S.layers[key].top - 0.2), x => x.toFixed(1), I18N.t('layer.base.tip'));
+    const topCtl = rangeCtrl(I18N.t('layer.top'), 1, 15, 0.1, U.U.alt(), () => S.layers[key].top, v => S.layers[key].top = v, x => U.alt(x, 1), I18N.t('layer.top.tip'));
+    const baseCtl = rangeCtrl(I18N.t('layer.base'), 0, 12, 0.1, U.U.alt(), () => S.layers[key].base, v => S.layers[key].base = Math.min(v, S.layers[key].top - 0.2), x => U.alt(x, 1), I18N.t('layer.base.tip'));
     const sub = [
       toggleCtrl(I18N.t('layer.enable', { name: I18N.t('cloud.' + key + '.name') }), () => S.layers[key].on, v => S.layers[key].on = v, I18N.t('cloud.' + key + '.band')),
       rangeCtrl(I18N.t('layer.coverage'), 0, 1, 0.01, '', () => S.layers[key].coverage, v => S.layers[key].coverage = v, x => x.toFixed(2), I18N.t('layer.coverage.tip')),
@@ -224,7 +243,7 @@
       ], () => S.viewMode, v => S.viewMode = v, I18N.t('adv.viewMode.tip')),
       toggleCtrl(I18N.t('adv.band'), () => S.fieldBand !== false, v => S.fieldBand = v, I18N.t('adv.band.tip')),
       selCtrl(I18N.t('adv.tintField'), [
-        ['off', I18N.t('tint.off')], ['lwc', I18N.t('tint.lwc')], ['beta', I18N.t('tint.beta')], ['re', I18N.t('tint.re')],
+        ['off', I18N.t('tint.off')], ['lwc', I18N.t('tint.lwc')], ['beta', I18N.t('tint.beta')], ['re', I18N.t('tint.re')], ['Nd', I18N.t('tint.Nd')],
       ], () => S.tintField, v => S.tintField = v, I18N.t('adv.tintField.tip')),
       rangeCtrl(I18N.t('adv.tintAmt'), 0, 1, 0.05, '', () => S.tintAmt, v => S.tintAmt = v, x => x.toFixed(2), I18N.t('adv.tintAmt.tip')),
       rangeCtrl(I18N.t('adv.sliceAlt'), 0, 14, 0.1, U.U.alt(), () => S.sliceAlt, v => S.sliceAlt = v, x => U.alt(x, 2), I18N.t('adv.sliceAlt.tip')),
@@ -241,8 +260,8 @@
         ['sb06', I18N.t('scheme.sb06')],
       ], () => S.micro.scheme || 'kessler', v => { S.micro.scheme = v; if (global.Kessler) global.Kessler.reset(); }, I18N.t('const.scheme.tip')),
       rangeCtrl(I18N.t('const.re'), 2, 25, 0.5, 'µm', () => S.micro.effRadiusUm, v => S.micro.effRadiusUm = v, x => x.toFixed(1), I18N.t('const.re.tip')),
-      rangeCtrl(I18N.t('const.N'), 10, 1000, 10, 'cm⁻³', () => S.micro.dropConc, v => S.micro.dropConc = v, x => x.toFixed(0), I18N.t('const.N.tip')),
-      toggleCtrl('CCN 活化耦合 (β_aer+w → N_c)', () => !!S.micro.ccnCoupled, v => { S.micro.ccnCoupled = v; if (v && A.operativeDropConc) A.operativeDropConc(); }, 'Twomey / Abdul-Razzak 气溶胶与上升气流耦合活化云滴数浓度 N_c'),
+      rangeCtrl(I18N.t('const.N'), 10, 1000, 10, 'cm⁻³', () => (S.micro.ccnCoupled && A.operativeDropConc) ? A.operativeDropConc() : S.micro.dropConc, v => S.micro.dropConc = v, x => x.toFixed(0), I18N.t('const.N.tip')),
+      toggleCtrl(I18N.t('const.ccn'), () => !!S.micro.ccnCoupled, v => { S.micro.ccnCoupled = v; build(); }, I18N.t('const.ccn.tip')),
       toggleCtrl(I18N.t('const.reMode'), () => S.micro.reMode === 'derived', v => S.micro.reMode = v ? 'derived' : 'fixed', I18N.t('const.reMode.tip')),
       rangeCtrl(I18N.t('const.k1'), 0.1, 5, 0.1, '×10⁻³', () => S.micro.autoConvK * 1000, v => S.micro.autoConvK = v / 1000, x => x.toFixed(1), I18N.t('const.k1.tip')),
       rangeCtrl(I18N.t('const.qc0'), 0.1, 2, 0.1, '×10⁻³', () => S.micro.autoConvQc0 * 1000, v => S.micro.autoConvQc0 = v / 1000, x => x.toFixed(1), I18N.t('const.qc0.tip')),
@@ -310,11 +329,17 @@
   function init() {
     container = document.getElementById('controls');
     build();
-    I18N.onLangChange(() => build());            // 语言切换：重建（文案全部实时取）
-    global.Units.onChange(() => build());        // 单位体系切换：单位标签与数值都要重排
+    const onLocaleOrUnitChange = () => {
+      build();
+      advBuilt = false;
+      const m = document.getElementById('adv-modal');
+      if (m && !m.classList.contains('hidden')) buildAdvModal();
+    };
+    I18N.onLangChange(onLocaleOrUnitChange);     // 语言切换：重建侧栏与已打开的高级诊断弹窗
+    global.Units.onChange(onLocaleOrUnitChange); // 单位体系切换：单位标签与数值都要重排
   }
 
-  // ---------------- 高级诊断（路线图 #1–#14） ----------------
+  // ---------------- 高级诊断 ----------------
   function btn(label, fn, tip) { const b = document.createElement('button'); b.className = 'act'; b.textContent = label; if (tip) b.title = tip; if (fn) b.onclick = fn; return b; }
   function opt(list) { return list.map(o => `<option value="${o[0]}">${o[1]}</option>`).join(''); }
 
@@ -355,6 +380,7 @@
     if (advBuilt) return; advBuilt = true;
     const body = document.getElementById('adv-body');
     if (!body) return;
+    body.innerHTML = '';
     const nav = document.createElement('div'); nav.className = 'adv-nav';
     const panes = document.createElement('div'); panes.className = 'adv-panes';
     body.appendChild(nav); body.appendChild(panes);
@@ -540,8 +566,8 @@
       s.innerHTML = opt([
         ['vis', I18N.t('sen.vis')],
         ['opticalDepth', I18N.t('sen.od')],
-        ['rainRate', '降水率 R (mm/h)'],
-        ['albedo', '云反照率 Albedo'],
+        ['rainRate', I18N.t('sen.rain')],
+        ['albedo', I18N.t('sen.albedo')],
       ]);
       return s;
     })());
@@ -646,8 +672,8 @@
     row.appendChild(btn(I18N.t('ex.grib'), () => { curFile = 'CloudField.grib.json'; ta.value = JSON.stringify(global.Exporter.toGRIB(), null, 2); }));
     row.appendChild(btn(I18N.t('ex.icon'), () => { curFile = 'icon_microphysics.nml'; ta.value = global.Exporter.toICONNamelist(); }));
     row.appendChild(btn(I18N.t('ex.yaml'), () => { curFile = 'cloudlab_experiment.yaml'; ta.value = global.Exporter.toExperimentYAML(); }));
-    row.appendChild(btn('Profile CSV', () => { curFile = 'CloudField_profile.csv'; ta.value = global.Exporter.toProfileCSV(0); }));
-    row.appendChild(btn('Schemes CSV', () => { curFile = 'CloudField_schemes.csv'; ta.value = global.Exporter.toSchemeCSV(); }));
+    row.appendChild(btn(I18N.t('ex.profCsv'), () => { curFile = 'CloudField_profile.csv'; ta.value = global.Exporter.toProfileCSV(0); }));
+    row.appendChild(btn(I18N.t('ex.schCsv'), () => { curFile = 'CloudField_schemes.csv'; ta.value = global.Exporter.toSchemeCSV(); }));
     row.appendChild(btn(I18N.t('ex.copy'), () => { if (navigator.clipboard) navigator.clipboard.writeText(ta.value); }));
     row.appendChild(btn('⬇ ' + I18N.t('tb.export'), () => {
       if (!ta.value) { curFile = 'icon_microphysics.nml'; ta.value = global.Exporter.toICONNamelist(); }
