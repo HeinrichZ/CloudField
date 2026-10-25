@@ -1002,6 +1002,56 @@ ok(qfeZukd > 580 && qfeZukd < 640 && Math.abs(qnhBack - 1013.2) < 0.5 && /^METAR
   `QFE=${qfeZukd} hPa, METAR=${metarActive.slice(0, 36)}`);
 win.Integration.state.activeStation = 'ZCCC';
 
+// 13) 复杂气象与民航特情工况校验：云底以下降水消光、探空逆温/暖鼻层插值、飞机积冰指数与消减、跑道风分解、低温高度表修正、TAF 趋势转时间序列
+Amod.deserialize(snapBefore9);
+const extRain = win.Physics.precipExtFromRate(15, 8);
+const extSnow = win.Physics.precipExtFromRate(5, -4);
+Amod.STATE.precipRateMmH = 20;
+const detBelowCloudRain = win.Physics.visibilityDetailed(0, 0, 0.1, 0);
+Amod.STATE.precipRateMmH = 0;
+const detBelowCloudDry = win.Physics.visibilityDetailed(0, 0, 0.1, 0);
+ok(extRain > 0.001 && extSnow > extRain * 0.5 && detBelowCloudRain.betaPrecip > 0 && detBelowCloudRain.vis < detBelowCloudDry.vis,
+  '云底以下降水消光 (Marshall-Palmer 雨消光与 Sekhon-Srivastava 雪消光) 显著降低云底至地面能见度',
+  `β_rain(15)=${extRain.toFixed(4)}, β_snow(5)=${extSnow.toFixed(4)}, vis(20mm/h)=${detBelowCloudRain.vis.toFixed(0)}m`);
+
+const invSonde = '0.0, 1013, -4.0, -5.0\n0.6, 945, 2.5, 2.0\n1.5, 845, -3.5, -4.5\n3.0, 700, -12.0, -15.0';
+const resInv = Amod.importRadiosonde(invSonde, { assimilate: true });
+const tSurfInv = Amod.tempAt(0);
+const tWarmNose = Amod.tempAt(0.6);
+ok(resInv.ok && resInv.warmNose === true && Array.isArray(resInv.inversions) && resInv.inversions.length >= 1 && tSurfInv < 0 && tWarmNose > 2.0,
+  '实测探空分段线性插值支持逆温层与冻雨暖鼻层 (0 km 负温 -4°C → 0.6 km 暖鼻 +2.5°C)',
+  `T(0)=${tSurfInv.toFixed(1)}°C, T(0.6km)=${tWarmNose.toFixed(1)}°C, warmNose=${resInv.warmNose}`);
+Amod.resetRadiosonde();
+
+const iceMod = win.Physics.icingIndexAt(1.0, 0.45, -6, 18, 0.85);
+const iceWarmPos = win.Physics.icingIndexAt(1.0, 0.45, 5, 18, 1.0);
+Amod.STATE.seeding.on = true;
+Amod.STATE.seeding.agent = 'AgI';
+Amod.STATE.seeding.inpConc = 150;
+Amod.STATE.surfaceTemp = 2;
+Amod.STATE.layers.sc.on = true; Amod.STATE.layers.sc.base = 0.6; Amod.STATE.layers.sc.top = 1.6; Amod.STATE.layers.sc.coverage = 0.9; Amod.STATE.layers.sc.density = 0.9;
+const sdIce = win.Physics.seedingDiagnostics(0);
+ok(iceMod.index >= 30 && iceWarmPos.index === 0 && sdIce.icingIndexSeeded < sdIce.icingIndexAmbient,
+  '过冷云飞机积冰指数 (ICAO/FAA LWC-温度-SLD 耦合) 有效识别积冰风险，且播云冰化后积冰指数下降',
+  `idx(-6°C)=${iceMod.index} (${iceMod.severity}), ambient=${sdIce.icingIndexAmbient} → seeded=${sdIce.icingIndexSeeded}`);
+
+const rwComp = win.Integration.VisConv.runwayWindComponents('27L', 180, 25, 32);
+const rwTail = win.Integration.VisConv.runwayWindComponents('09R', 270, 14, 18);
+ok(rwComp.crosswindKt === 25 && rwComp.crosswindWarn === true && rwTail.tailwindKt === 14 && rwTail.tailwindWarn === true,
+  '跑道磁方向风分量分解准确计算顶风/顺风/正侧风并触发顺风 (>10 kt) 与侧风 (>20 kt) 运行超限告警',
+  `27L@180/25G32: cross=${rwComp.crosswindKt}kt, 09R@270/14: tail=${rwTail.tailwindKt}kt`);
+
+const coldCorr = win.Integration.Coord.coldTempAltitudeCorrection(200, 1000, -25);
+const warmCorr = win.Integration.Coord.coldTempAltitudeCorrection(200, 1000, 20);
+ok(coldCorr.correctionFt >= 30 && coldCorr.correctedDhFt === 200 + coldCorr.correctionFt && coldCorr.needsCorrection === true && warmCorr.correctionFt === 0,
+  'ICAO Doc 8168 (PANS-OPS) 低温气压高度表修正准确计算严寒机场决断高 DH 正修正量',
+  `T=-25°C → DH=200+${coldCorr.correctionFt}=${coldCorr.correctedDhFt} ft`);
+
+const tafRes = win.Integration.tafToTimeSeries('TAF ZBAA 140000Z 1406/1506 18004MPS 6000 SCT020 BECMG 1408/1410 0600 FG VV002 TEMPO 1412/1416 0300 +TSRA BKN005CB BECMG 1418/1420 9999 NSW SCT040');
+ok(tafRes.ok && tafRes.stepsCount >= 4 && tafRes.minVisM < 600 && tafRes.maxVisM > 2000 && tafRes.maxVisM > tafRes.minVisM * 5,
+  'Metar.tafToTimeSeries 将含 BECMG/TEMPO 的多时段复杂 TAF 转化为 TimeSeries 时间序列并生成能见度演变曲线',
+  `steps=${tafRes.stepsCount}, visRange=${tafRes.minVisM}~${tafRes.maxVisM}m`);
+
 Amod.deserialize(snapBefore9);
 
 // ================= 汇总 =================

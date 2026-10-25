@@ -1,12 +1,15 @@
-# CloudField 方法学文档（可信度底座）
+# CloudField 方法学与物理规程说明
 
 > 本文件对应软件内“说明”弹窗内容，作为可外发的开发文档。
 > Copyright Tianyuan.J.Z© · 作者：Heinrich.Z & Tianyuan.J.Z
 
-## 一、能见度与消光（可验证核心）
+## 一、能见度与消光计算
 
 - **消光系数**（单分散球滴近似）：`β = 3·LWC / (2·ρ_w·r_e)`，单位 m⁻¹。
   - LWC：液态水含量（kg/m³）；`ρ_w = 1000 kg/m³`；`r_e`：云滴有效半径（m）。
+- **降雨与降雪下落粒子消光**（云顶至地面）：
+  - 降雨消光（Marshall–Palmer 谱）：$\beta_{\text{rain}} = 0.21 \times 10^{-3} \cdot R^{0.75}\ \text{m}^{-1}$（$R$ 为地面雨强，单位 mm/h）；
+  - 降雪消光（Sekhon–Srivastava 谱）：$\beta_{\text{snow}} = 1.25 \times 10^{-3} \cdot R^{0.82}\ \text{m}^{-1}$（$T \le 0^\circ\text{C}$ 时生效，相同水当量下降雪消光显著强于降雨）。
 - **能见度**（Koschmieder 定律）：`V = -ln(ε)/β = ln(1/ε)/β`，对比阈值 `ε = 0.02`，即 `V ≈ 3.912/β`（单位 m）。
 - **消光谱型**（Ångström）：`β(λ) = β(λ₀)·(λ₀/λ)^α`，`α≈0–2`；以 550nm 为基准。
 - **密度场归一化**：`d = clamp(LWC / LWC_max, 0, 1) · noise`，`LWC_max = 1.2 g/m³`。
@@ -133,7 +136,7 @@ r_e 的单一来源由 `micro.reMode` 决定：`derived`（默认）用 `effRadi
 
 所有计算在本地浏览器完成，不采集、不上传任何数据。VIS/RVR/CMV 转换遵循 ICAO Doc 9365 与 EASA AMC 至 NCO.OP.110（2024 第5版）。
 
-## 七、VIS / RVR / CMV 转换（民航工作流）
+## 七、VIS / RVR / CMV 转换与跑道风分解（民航工作流）
 
 - **K 系数表**（CMV = VIS_met × K；夜间无灯光不适用）：
 
@@ -144,13 +147,17 @@ r_e 的单一来源由 `micro.reMode` 决定：`derived`（默认）用 `effRadi
 | 无灯光 | ×1.0 | 不适用 |
 
 - **禁止使用 CMV 的三种情况**：① 已有 RVR 直接观测报告；② 计算起飞最低标准；③ RVR 最低标准低于 800m。
-- **运行类别预设**：CAVOK / CAT-I(≥550m) / CAT-II(300–550m) / CAT-IIIA(175–300m) / CAT-IIIB(50–175m) / CAT-IIIC(0m)。
+- **运行类别预设与场景联动**：CAVOK / VMC / CAT-I(≥550m, Ceiling≥60m) / CAT-II(300–550m, Ceiling≥30m) / CAT-IIIA(175–300m) / CAT-IIIB(50–175m) / CAT-IIIC(0m)，支持与当前三维场景最差能见度及最低 BKN/OVC 云底高双向同步。
+- **跑道风分量分解与超限告警**：按跑道识别码（如 `27L` → 磁航向 $270^\circ$）分解顶风（Headwind）、顺风（Tailwind）与正侧风（Crosswind），当顺风 $>10\text{ kt}$ 或阵风侧风 $>20\text{ kt}$ 时触发超限提示。
+- **飞机积冰与过冷大水滴（SLD）风险指数**：在 $0 \sim -38^\circ\text{C}$ 过冷温区耦合过冷水含量（SLWC）、温度收集效率与过冷大水滴（$r_e > 12\ \mu\text{m}$）碰撞放大因子，评估积冰严重度（`NONE / LIGHT / MODERATE / SEVERE`）及人工播云冰化后的积冰消减幅度。
 
-## 八、坐标系与机场表
+## 八、坐标系、机场表、高原 QFE/QNH 与低温高度表修正
 
 - WGS-84 经纬度；海拔为场压面近似，EGM96 大地水准面偏移由 `Coord.geoidOffset` 占位（可由 Bridge 提供网格）。
 - 米 ↔ 百英尺：`1×100ft = 30.48 m`。
-- 中国民航机场表为校核子集（~90），完整 ~250 由 Bridge 经 `/api/airports` 提供，`loadAirportTable` 可注入。
+- **高原与高高原机场 QNH ↔ QFE 换算**：按机场标高 $h_{\text{elev}}$ 与地面温度 $T_0$ 执行压高互逆换算 $\text{QFE} = \text{QNH} \cdot \exp\left(-\frac{g \cdot h_{\text{elev}}}{R_d \cdot \bar{T}}\right)$，并自动标注一般高原机场（$\ge 1524\text{ m}$）与高高原机场（$\ge 2438\text{ m}$）。
+- **ICAO Doc 8168 (PANS-OPS) 低温气压高度表修正**：当机场地面温度低于标准大气（ISA）时，计算决断高（DH/MDH）的低温高度正修正量 $\Delta H = H \cdot \frac{15 - T_0}{273.15 + T_0 - 0.5 L_0 (H + H_{\text{elev}})}$。
+- 中国民航机场表为校核子集（63 个），完整 ~250 由 Bridge 经 `/api/airports` 提供，`loadAirportTable` 可注入。
 
 ## 九、已知限制
 

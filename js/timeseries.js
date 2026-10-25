@@ -81,12 +81,16 @@
       env[k] = lerp(a.env[k], b.env[k], f);
     const layers = {};
     for (const k of LAYER_ORDER) {
-      layers[k] = {
-        coverage: lerp(a.layers[k].coverage, b.layers[k].coverage, f),
-        density: lerp(a.layers[k].density, b.layers[k].density, f),
-      };
+      const cov = lerp(a.layers[k].coverage, b.layers[k].coverage, f);
+      const den = lerp(a.layers[k].density, b.layers[k].density, f);
+      layers[k] = { coverage: cov, density: den, on: cov > 0.005 };
     }
-    P.applyStatePatch({ env, layers });
+    const patch = { env, layers };
+    if (a.aerosol && b.aerosol) {
+      const beta0 = lerp(a.aerosol.beta0 || 5e-5, b.aerosol.beta0 || 5e-5, f);
+      patch.aerosol = { on: beta0 > 1e-4, beta0 };
+    }
+    P.applyStatePatch(patch);
     return { t, env, layers };
   }
 

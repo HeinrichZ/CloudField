@@ -230,7 +230,7 @@
       return out;
     }
 
-    // 将解析结果映射到 CloudField 的 Atmosphere.STATE（含低能见度/天气现象/垂直能见度对 3D 云雾与气溶胶消光场的闭环反演）
+    // 将解析结果映射到 CloudField 的 Atmosphere.STATE（含低能见度/天气现象/垂直能见度对 3D 云雾与气溶胶消光场的反演）
     function toScene(report) {
       const S = A.STATE;
       const notes = [], applied = [];
@@ -321,25 +321,120 @@
       return { applied, notes };
     }
 
-    // 简易 TAF 解析：抽取有效时段(DDHH/DDHH)与趋势段（BECMG/TEMPO）
+    // 简易 TAF 解析：抽取有效时段(DDHH/DDHH)与趋势段（BECMG/TEMPO/FM）
     function parseTAF(raw) {
-      const s = raw.trim().replace(/\s+/g, ' ').toUpperCase();
+      const s = raw.trim().replace(/=$/, '').replace(/\s+/g, ' ').toUpperCase();
       const tokens = s.split(' ');
-      const out = { type: 'TAF', station: tokens[1] || null, validFrom: null, validTo: null, trends: [], raw: raw.trim() };
+      const out = { type: 'TAF', station: tokens[1] || null, validFrom: null, validTo: null, baseTokens: [], trends: [], raw: raw.trim() };
       // 有效时段：DDHH/DDHH（4/4）或 DDHHMM/DDHHMM（6/6）
       const period = tokens.find(t => /^\d{4}\/\d{4}$/.test(t) || /^\d{6}\/\d{6}$/.test(t));
       if (period) { const p = period.split('/'); out.validFrom = p[0]; out.validTo = p[1]; }
-      // 收集 BECMG/TEMPO 段
+      // 收集初始段与 BECMG/TEMPO/FM 段
       let cur = null;
-      for (const t of tokens) {
-        if (t === 'BECMG' || t === 'TEMPO') { if (cur) out.trends.push(cur); cur = { kind: t, body: [] }; }
-        else if (cur) cur.body.push(t);
+      for (let idx = 0; idx < tokens.length; idx++) {
+        const t = tokens[idx];
+        if (t === 'BECMG' || t === 'TEMPO' || /^FM\d{4,6}$/.test(t)) {
+          if (cur) out.trends.push(cur);
+          cur = { kind: t.startsWith('FM') ? 'FM' : t, fmTime: t.startsWith('FM') ? t.slice(2) : null, body: [] };
+        } else if (cur) {
+          cur.body.push(t);
+        } else if (idx >= 2 && t !== period && !/^\d{6}Z$/.test(t)) {
+          out.baseTokens.push(t);
+        }
       }
       if (cur) out.trends.push(cur);
       return out;
     }
 
-    return { parse, toScene, parseTAF, windSpeedToMPS, dewpointToRH };
+    // 将 TAF 报文（含基础段与 BECMG / TEMPO / FM 演变段）转化为 TimeSeries 多步三维场景时间序列
+    function tafToTimeSeries(raw) {
+      const taf = parseTAF(raw);
+      const saved = A.serialize();
+      const steps = [];
+      function applyFragmentTokens(toks) {
+        if (!toks || !toks.length) return;
+        const clean = toks.filter(tk => !/^\d{4}\/\d{4}$/.test(tk) && !/^PROB\d{2}$/.test(tk));
+        if (!clean.length) return;
+        if (clean.indexOf('NSW') >= 0) {
+          if (A.STATE.aerosol) { A.STATE.aerosol.on = false; A.STATE.aerosol.beta0 = 5e-5; }
+        }
+        const synRaw = 'METAR ' + (taf.station || 'ZBAA') + ' 140000Z ' + clean.join(' ');
+        try {
+          const rep = parse(synRaw);
+          toScene(rep);
+        } catch (_) {}
+      }
+      function captureStep(tHour, label) {
+        const S = A.STATE;
+        const layers = {};
+        A.LAYER_ORDER.forEach(k => {
+          layers[k] = {
+            coverage: S.layers[k].on ? S.layers[k].coverage : 0,
+            density: S.layers[k].on ? S.layers[k].density : 0,
+          };
+        });
+        steps.push({
+          t: tHour,
+          label: label || ('T+' + tHour + 'h'),
+          env: {
+            surfaceTemp: S.surfaceTemp,
+            surfaceRH: S.surfaceRH,
+            windSpeed: S.windSpeed,
+            windDir: S.windDir,
+            convection: S.convection,
+          },
+          aerosol: {
+            on: !!(S.aerosol && S.aerosol.on),
+            beta0: (S.aerosol && S.aerosol.on) ? S.aerosol.beta0 : 5e-5,
+          },
+          layers,
+        });
+      }
+      try {
+        applyFragmentTokens(taf.baseTokens);
+        captureStep(0, 'BASE');
+        let tH = 3;
+        taf.trends.forEach((tr) => {
+          const preSnap = A.serialize();
+          applyFragmentTokens(tr.body);
+          captureStep(tH, tr.kind);
+          tH += 3;
+          if (tr.kind === 'TEMPO') {
+            // TEMPO 为短暂波动段，记录波谷后恢复基态并推进下一时步
+            A.deserialize(preSnap);
+            captureStep(tH, 'POST-TEMPO');
+            tH += 3;
+          }
+        });
+        if (steps.length === 1) {
+          captureStep(6, 'HOLD');
+        }
+        if (global.TimeSeries && global.TimeSeries.setSteps) {
+          global.TimeSeries.setSteps(steps);
+        } else if (global.TimeSeries && global.TimeSeries.TS) {
+          global.TimeSeries.TS.steps = steps;
+          global.TimeSeries.TS.t0 = 0;
+          global.TimeSeries.TS.t1 = steps[steps.length - 1].t;
+        }
+        const curve = (global.TimeSeries && global.TimeSeries.visibilityCurve)
+          ? global.TimeSeries.visibilityCurve(Math.max(8, steps.length * 4))
+          : [];
+        const visList = curve.map(p => p.vis).filter(isFinite);
+        return {
+          ok: true,
+          station: taf.station,
+          stepsCount: steps.length,
+          minVisM: visList.length ? Math.round(Math.min(...visList)) : 10000,
+          maxVisM: visList.length ? Math.round(Math.max(...visList)) : 10000,
+          steps,
+          curve,
+        };
+      } finally {
+        A.deserialize(saved);
+      }
+    }
+
+    return { parse, toScene, parseTAF, tafToTimeSeries, windSpeedToMPS, dewpointToRH };
   })();
 
   // =====================================================================
@@ -413,7 +508,38 @@
       const cls = classifyMinima(visM, visM, ceilingM);
       return { visM, ceilingM, category: cls.category, okCat1: cls.okCat1 };
     }
-    return { K_TABLE, calcCMV, rvrToVis, forbiddenCases, PRESETS, kOf, classifyMinima, currentSceneMinima };
+    // 跑道磁方向风分量分解：计算顶风 (Headwind)、顺风 (Tailwind)、正侧风 (Crosswind) 及超限告警（ICAO/CAAC 顺风 >10 kt、污染跑道侧风 >20 kt 阈值）
+    function runwayWindComponents(rwyDesignator, windDirDeg, windSpeedKt, gustKt) {
+      const m = String(rwyDesignator || '36').toUpperCase().match(/(\d{1,2})[LCR]?/);
+      const num = m ? Math.min(36, Math.max(1, parseInt(m[1], 10))) : 36;
+      const rwyHeading = num * 10;
+      const spd = Math.max(0, isFinite(windSpeedKt) ? windSpeedKt : 0);
+      const gst = (gustKt != null && isFinite(gustKt) && gustKt > spd) ? gustKt : spd;
+      if (windDirDeg === 'VRB' || !isFinite(windDirDeg)) {
+        return {
+          rwyHeading, windDirDeg: 'VRB', windSpeedKt: +spd.toFixed(1), gustKt: +gst.toFixed(1),
+          headwindKt: 0, tailwindKt: +spd.toFixed(1), crosswindKt: +spd.toFixed(1),
+          maxCrosswindKt: +gst.toFixed(1), crossSide: 'VRB',
+          tailwindWarn: spd > 10, crosswindWarn: gst > 20,
+        };
+      }
+      const diffDeg = ((windDirDeg - rwyHeading + 540) % 360) - 180;
+      const rad = diffDeg * Math.PI / 180;
+      const along = spd * Math.cos(rad);
+      const cross = Math.abs(spd * Math.sin(rad));
+      const maxCross = Math.abs(gst * Math.sin(rad));
+      const headwindKt = along >= 0 ? +along.toFixed(1) : 0;
+      const tailwindKt = along < 0 ? +(-along).toFixed(1) : 0;
+      return {
+        rwyHeading, windDirDeg, windSpeedKt: +spd.toFixed(1), gustKt: +gst.toFixed(1),
+        headwindKt, tailwindKt, crosswindKt: +cross.toFixed(1),
+        maxCrosswindKt: +maxCross.toFixed(1),
+        crossSide: Math.abs(diffDeg) < 1 ? 'NONE' : (diffDeg > 0 ? 'R' : 'L'),
+        tailwindWarn: tailwindKt > 10,
+        crosswindWarn: maxCross > 20,
+      };
+    }
+    return { K_TABLE, calcCMV, rvrToVis, forbiddenCases, PRESETS, kOf, classifyMinima, currentSceneMinima, runwayWindComponents };
   })();
 
   // =====================================================================
@@ -586,8 +712,35 @@
     }
     function byICAO(icao) { return state.airportTable.find(a => a.icao === icao) || null; }
     function loadAirportTable(arr) { if (Array.isArray(arr)) state.airportTable = arr; }
+    // ICAO Doc 8168 (PANS-OPS Vol I) 低温气压高度表修正：当机场地面温度低于标准大气 (ISA) 时，计算决断高 DH / MDH 的低温高度正修正量（ft）
+    function coldTempAltitudeCorrection(dhFt, airportElevFt, surfaceTempC) {
+      const H = Math.max(0, isFinite(dhFt) ? dhFt : 200);
+      const elevFt = Math.max(0, isFinite(airportElevFt) ? airportElevFt : 0);
+      const tSurf = isFinite(surfaceTempC) ? surfaceTempC : 15;
+      const L0 = 0.00198; // °C / ft (ISA 递减率)
+      const isaTempC = +(15 - L0 * elevFt).toFixed(1);
+      const isaDevC = +(tSurf - isaTempC).toFixed(1);
+      if (tSurf >= isaTempC) {
+        return {
+          dhFt: H, correctedDhFt: H, correctionFt: 0,
+          isaTempC, isaDevC, needsCorrection: false,
+        };
+      }
+      const T0 = tSurf + L0 * elevFt;
+      const denom = 273.15 + T0 - 0.5 * L0 * (H + elevFt);
+      const rawCorr = H * ((15 - T0) / Math.max(150, denom));
+      const correctionFt = Math.max(0, Math.ceil(rawCorr));
+      return {
+        dhFt: H,
+        correctedDhFt: H + correctionFt,
+        correctionFt,
+        isaTempC,
+        isaDevC,
+        needsCorrection: tSurf <= 0 || correctionFt >= 10,
+      };
+    }
 
-    return { TABLE, elevationM, qnhToQfe, qfeToQnh, setActiveAirport, mToHundredFt, hundredFtToM, search, byICAO, loadAirportTable, geoidOffset, airportName };
+    return { TABLE, elevationM, qnhToQfe, qfeToQnh, coldTempAltitudeCorrection, setActiveAirport, mToHundredFt, hundredFtToM, search, byICAO, loadAirportTable, geoidOffset, airportName };
   })();
 
   // =====================================================================
@@ -771,6 +924,7 @@
         <button class="act" id="metar-parse">${I18N.t('metar.parse')}</button>
         <button class="act" id="metar-apply">${I18N.t('metar.apply')}</button>
         <button class="act" id="taf-parse">${I18N.t('metar.taf')}</button>
+        <button class="act" id="taf-to-ts">⏱ TAF 趋势转化为时间序列</button>
       </div>
       <pre id="metar-out" class="int-out">${I18N.t('metar.outHint')}</pre>`;
     const input = el.querySelector('#metar-input');
@@ -792,6 +946,12 @@
     el.querySelector('#taf-parse').onclick = () => {
       try { const t = Metar.parseTAF(input.value); out.textContent = JSON.stringify(t, null, 2); }
       catch (e) { out.textContent = I18N.t('metar.parseFail', { msg: e.message }); }
+    };
+    el.querySelector('#taf-to-ts').onclick = () => {
+      try {
+        const res = Metar.tafToTimeSeries(input.value);
+        out.textContent = `已将 TAF (${res.station || '—'}) 转化为时间序列（共 ${res.stepsCount} 个时步）\n能见度演变区间: ${res.minVisM} m ~ ${res.maxVisM} m\n时步节点: ${res.steps.map(s => `${s.t}h(${s.label})`).join(' → ')}`;
+      } catch (e) { out.textContent = I18N.t('metar.parseFail', { msg: e.message }); }
     };
   }
   function recordOnce(ev) { // 临时录制单条
@@ -881,7 +1041,11 @@
           curVis = eqVis || curRvr;
           const scMin = VisConv.currentSceneMinima();
           const cls = VisConv.classifyMinima(curVis, curRvr, scMin.ceilingM);
-          out.textContent = `RVR ${curRvr} m${I18N.t('vis.calcRvrRunway')}${area.querySelector('#i-rwy').value}）\n${I18N.t('vis.calcRvr')}${eqVis} m → 运行等级判定: ${cls.category}`;
+          const rwyVal = area.querySelector('#i-rwy').value;
+          const windKt = (A.STATE.windSpeed || 0) / 0.514444;
+          const rwWind = VisConv.runwayWindComponents(rwyVal, A.STATE.windDir || 0, windKt, windKt);
+          const windNote = `\n跑道风分解 (${rwyVal}, 磁航向 ${rwWind.rwyHeading}°): 顶风 ${rwWind.headwindKt} kt · 顺风 ${rwWind.tailwindKt} kt${rwWind.tailwindWarn ? ' [⚠️超10kt限]' : ''} · 侧风 ${rwWind.crosswindKt} kt${rwWind.crosswindWarn ? ' [⚠️超20kt限]' : ''}`;
+          out.textContent = `RVR ${curRvr} m${I18N.t('vis.calcRvrRunway')}${rwyVal}）\n${I18N.t('vis.calcRvr')}${eqVis} m → 运行等级判定: ${cls.category}${windNote}`;
         };
         area.querySelector('#i-rwy').oninput = area.querySelector('#i-rvr').oninput;
         i.oninput();
@@ -976,6 +1140,8 @@
       if (!a) return;
       const qnh = A.STATE.surfacePressure || 1013;
       const qfe = Coord.qnhToQfe(qnh, a.elev, A.STATE.surfaceTemp);
+      const elevFt = Math.round(a.elev / 0.3048);
+      const coldCorr = Coord.coldTempAltitudeCorrection(200, elevFt, A.STATE.surfaceTemp);
       const isPlateau = a.elev >= 2438 ? '高高原机场 (≥8000ft)' : (a.elev >= 1524 ? '一般高原机场 (≥5000ft)' : '平原/丘陵机场');
       detailBox.innerHTML = `<div class="ap-detail" style="padding:6px 8px;border:1px solid #2b3f66;border-radius:4px;background:rgba(16,26,46,0.65)">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -983,8 +1149,9 @@
           <button class="act" id="ap-set-active">✓ 设为当前运行场站 (${state.activeStation === a.icao ? '当前' : a.icao})</button>
         </div>
         <div>${I18N.t('airport.wgsLat')}：${a.lat.toFixed(4)}° · ${I18N.t('airport.wgsLon')}：${a.lon.toFixed(4)}°</div>
-        <div>${I18N.t('airport.elev')}：${a.elev} m = ${Coord.mToHundredFt(a.elev).toFixed(1)}×100ft (${Math.round(a.elev / 0.3048)} ft)</div>
+        <div>${I18N.t('airport.elev')}：${a.elev} m = ${Coord.mToHundredFt(a.elev).toFixed(1)}×100ft (${elevFt} ft)</div>
         <div>气压换算：当前 QNH=${qnh} hPa → 场面气压 <b>QFE=${qfe} hPa</b> (压差 ${(qnh - qfe).toFixed(1)} hPa)</div>
+        <div>低温高度修正 (ICAO Doc 8168, DH=200ft, T=${A.STATE.surfaceTemp}°C, ΔISA=${coldCorr.isaDevC >= 0 ? '+' : ''}${coldCorr.isaDevC}°C)：修正后 DH=<b>${coldCorr.correctedDhFt} ft</b> (+${coldCorr.correctionFt} ft)${coldCorr.needsCorrection ? ' <span style="color:#ff9f1c">[需执行低温高度修正]</span>' : ''}</div>
       </div>`;
       const btnSet = detailBox.querySelector('#ap-set-active');
       if (btnSet) {
@@ -1098,7 +1265,7 @@
 
   global.Integration = {
     init, initBridge, renderInto,
-    parse: Metar.parse, parseTAF: Metar.parseTAF, toScene: Metar.toScene,
+    parse: Metar.parse, parseTAF: Metar.parseTAF, tafToTimeSeries: Metar.tafToTimeSeries, toScene: Metar.toScene,
     VisConv, Coord, Bridge,
     get state() { return state; },
   };

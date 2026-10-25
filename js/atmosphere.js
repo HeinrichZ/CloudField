@@ -143,10 +143,38 @@
   }
   function surfaceTempEff() { return STATE.surfaceTemp + (STATE.envT || 0); }
   function surfaceRHEff() { return Math.min(100, Math.max(1, STATE.surfaceRH + (STATE.envRH || 0))); }
+
+  let useCustomSounding = false;
+  function canUseSoundingProfile() {
+    if (!useCustomSounding || !activeRadiosonde || !activeRadiosonde.data || activeRadiosonde.data.length < 3) return false;
+    const r0 = activeRadiosonde.data[0];
+    return Math.abs(STATE.surfaceTemp - r0[2]) < 1e-3 && Math.abs(STATE.surfacePressure - r0[1]) < 1e-2;
+  }
+  function interpSounding(z, colIdx) {
+    const rows = activeRadiosonde.data;
+    if (z <= rows[0][0]) return rows[0][colIdx];
+    for (let i = 0; i < rows.length - 1; i++) {
+      const z0 = rows[i][0], z1 = rows[i + 1][0];
+      if (z >= z0 && z <= z1) {
+        const t = (z1 - z0) > 1e-6 ? (z - z0) / (z1 - z0) : 0;
+        return rows[i][colIdx] + t * (rows[i + 1][colIdx] - rows[i][colIdx]);
+      }
+    }
+    const last = rows[rows.length - 1];
+    const dz = z - last[0];
+    if (colIdx === 2) return last[2] - STATE.lapseRate * dz;
+    if (colIdx === 3) return last[3] - STATE.dewLapse * dz;
+    return last[1] * Math.exp(-dz / 7.4);
+  }
+
   function dewAt(z) {
+    if (canUseSoundingProfile()) return interpSounding(z, 3) + (STATE.envT || 0);
     return dewpointFromRH(surfaceTempEff(), surfaceRHEff()) - STATE.dewLapse * z;
   }
-  function tempAt(z) { return surfaceTempEff() - STATE.lapseRate * z; }
+  function tempAt(z) {
+    if (canUseSoundingProfile()) return interpSounding(z, 2) + (STATE.envT || 0);
+    return surfaceTempEff() - STATE.lapseRate * z;
+  }
   function lclHeight() {
     const T0 = surfaceTempEff();
     const Td0 = dewpointFromRH(T0, surfaceRHEff());
@@ -155,6 +183,7 @@
     return Math.max(0, d / gamma);
   }
   function pressureAt(z) {
+    if (canUseSoundingProfile() && z >= 0) return Math.max(50, interpSounding(z, 1));
     const Tk0 = surfaceTempEff() + 273.15;
     const Tk = tempAt(z) + 273.15;
     const lr = Math.max(0.05, STATE.lapseRate);
@@ -541,8 +570,12 @@
   };
   let activeRadiosonde = RADIOSONDE_SAMPLE;
   function getRadiosonde() { return activeRadiosonde || RADIOSONDE_SAMPLE; }
-  function resetRadiosonde() { activeRadiosonde = RADIOSONDE_SAMPLE; return activeRadiosonde; }
-  // 解析并导入自定义探空文本（每行: z(km 或 m), p(hPa), T(°C), Td(°C)），可选将温湿压与直减率同化到当前场景
+  function resetRadiosonde() {
+    activeRadiosonde = RADIOSONDE_SAMPLE;
+    useCustomSounding = false;
+    return activeRadiosonde;
+  }
+  // 解析并导入自定义探空文本（每行: z(km 或 m), p(hPa), T(°C), Td(°C)），可选将温湿压、逆温层折线与直减率同化到当前场景
   function importRadiosonde(text, opts) {
     opts = opts || {};
     const lines = String(text || '').split(/\r?\n/);
@@ -560,10 +593,20 @@
     const maxZ = Math.max.apply(null, rows.map(r => r[0]));
     if (maxZ > 50) rows.forEach(r => { r[0] = +(r[0] / 1000).toFixed(3); });
     rows.sort((a, b) => a[0] - b[0]);
+    const inversions = [];
+    let warmNose = false;
+    for (let i = 0; i < rows.length - 1; i++) {
+      if (rows[i + 1][2] > rows[i][2]) {
+        inversions.push({ zBaseKm: rows[i][0], zTopKm: rows[i + 1][0], dT: +(rows[i + 1][2] - rows[i][2]).toFixed(2) });
+        if (rows[0][2] < 0 && rows[i + 1][2] > 0) warmNose = true;
+      }
+    }
     activeRadiosonde = {
       station: opts.station || '自定义探空 (Custom Radiosonde)',
-      note: '用户导入实测/自定义探空廓线 (' + rows.length + ' 层)',
+      note: '用户导入实测/自定义探空廓线 (' + rows.length + ' 层' + (inversions.length ? ' · 含逆温层' : '') + ')',
       data: rows,
+      inversions,
+      warmNose,
     };
     if (opts.assimilate !== false) {
       const r0 = rows[0], rTop = rows[rows.length - 1];
@@ -574,10 +617,10 @@
       STATE.surfaceRH = Math.min(100, Math.max(5, Math.round(rh0)));
       const dz = Math.max(0.5, rTop[0] - r0[0]);
       STATE.lapseRate = Math.min(11, Math.max(0.5, +((r0[2] - rTop[2]) / dz).toFixed(2)));
-      const td0 = r0[2] - r0[3], tdTop = rTop[2] - rTop[3];
       STATE.dewLapse = Math.min(4.0, Math.max(0.2, +(STATE.lapseRate - (r0[3] - rTop[3]) / dz).toFixed(2)));
+      useCustomSounding = true;
     }
-    return { ok: true, count: rows.length, sonde: activeRadiosonde };
+    return { ok: true, count: rows.length, inversions, warmNose, sonde: activeRadiosonde };
   }
   function validateAgainstRadiosonde(sonde) {
     const src = sonde || activeRadiosonde || RADIOSONDE_SAMPLE;

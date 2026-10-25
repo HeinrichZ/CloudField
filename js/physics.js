@@ -76,6 +76,51 @@
     return Math.max(0, a.beta0) * Math.exp(-Math.max(0, z) / Math.max(0.1, a.scaleH));
   }
 
+  // 降水粒子（云底至地面雨滴/雪晶下落柱）光学消光系数 β_precip (m⁻¹)：
+  // Marshall–Palmer 雨滴谱几何光学消光 β_rain ≈ 0.21e-3 · R^0.75 [m⁻¹]；降雪晶花消光 β_snow ≈ 1.25e-3 · R^0.82 [m⁻¹]
+  function precipExtFromRate(rainMmH, tempC) {
+    const R = Math.max(0, rainMmH || 0);
+    if (R <= 0.02) return 0;
+    if (tempC != null && tempC <= 0) {
+      return 1.25e-3 * Math.pow(R, 0.82);
+    }
+    return 0.21e-3 * Math.pow(R, 0.75);
+  }
+
+  // 飞机结冰（Aircraft Icing）与过冷大水滴（SLD）风险指数计算（ICAO / FAA 结冰包线：0 ~ -22°C 过冷液态水 + 大液滴碰撞效率放大）
+  function icingIndexAt(z, lwcGm3, tempC, reUm, fracWater) {
+    const T = tempC != null ? tempC : A.tempAt(z || 0);
+    if (T >= 0 || T <= -38) return { slwc: 0, index: 0, severity: 'NONE', sldRisk: false };
+    const fw = fracWater != null ? fracWater : 1;
+    const slwc = Math.max(0, (lwcGm3 || 0) * fw);
+    if (slwc < 0.02) return { slwc, index: 0, severity: 'NONE', sldRisk: false };
+    // 温度收集与潜热冻结效率钟形曲线：在 -4 ~ -12°C 明冰/混合冰温窗达到峰值 1.0
+    const tEff = T > -4 ? (-T / 4) : (T >= -14 ? 1.0 : Math.max(0.15, 1 - (-14 - T) / 24));
+    // 过冷大水滴 (SLD, r_e > 12 µm) 碰撞截面与越过机翼防冰区风险放大
+    const re = reUm || 8;
+    const sldFac = re > 12 ? (1 + 0.45 * Math.min(1.5, (re - 12) / 10)) : 1.0;
+    const effSlwc = slwc * tEff * sldFac;
+    const idx = Math.min(100, Math.round(effSlwc * 140));
+    const severity = effSlwc >= 0.50 ? 'SEVERE' : (effSlwc >= 0.18 ? 'MODERATE' : (effSlwc >= 0.03 ? 'LIGHT' : 'NONE'));
+    return { slwc: +slwc.toFixed(4), index: idx, severity, sldRisk: re >= 14 && slwc >= 0.05 };
+  }
+
+  function icingDiagnostics(time) {
+    const layers = A.effectiveLayers();
+    const wind = { x: S.windSpeed, dir: S.windDir };
+    let maxIdx = 0, worstAlt = 0, maxSlwc = 0, worstSev = 'NONE', anySld = false;
+    for (let z = 0.25; z <= 9.0; z += 0.25) {
+      const d = detailedAt(0, 0, z, layers, wind, time || 0);
+      const fw = d.frac ? (d.frac.water || 0) : 1;
+      const ic = icingIndexAt(z, d.lwc, d.temp, d.reUm, fw);
+      if (ic.index > maxIdx) {
+        maxIdx = ic.index; worstAlt = z; maxSlwc = ic.slwc; worstSev = ic.severity;
+      }
+      if (ic.sldRisk) anySld = true;
+    }
+    return { maxIndex: maxIdx, worstAltKm: worstAlt, maxSlwcGm3: maxSlwc, severity: worstSev, sldRisk: anySld };
+  }
+
   // 当前粒子谱有效方差 ν_eff（来自 Spectrum 模块或 STATE.spectrum）
   function currentVeff() {
     if (global.Spectrum && typeof global.Spectrum.moments === 'function') {
@@ -85,7 +130,7 @@
     return (S.spectrum && isFinite(S.spectrum.veff)) ? S.spectrum.veff : 0.10;
   }
 
-  // 详细消光：在 (x,y,z) 处分解各相态、非球形冰晶习惯、粒子谱宽与气溶胶贡献
+  // 详细消光：在 (x,y,z) 处分解各相态、非球形冰晶习惯、粒子谱宽、气溶胶与云底以下降水粒子贡献
   function detailedAt(x, y, z, layers, wind, time) {
     const f = A.sampleFields(x, y, z, layers, wind, time);
     const lwcGm3 = f.lwc;                                   // g/m³（已包含播云 WBF 消散沟削减）
@@ -104,6 +149,22 @@
       betaSca += scaK;
       gWeighted += scaK * PHASE_G[k];
     }
+    // 若开启了 Kessler 降水演进（或显式设定了地面降水率 precipRateMmH），在云顶及云底以下叠加下落雨滴/雪晶消光
+    const rainR = (S.precipRateMmH != null && S.precipRateMmH > 0)
+      ? S.precipRateMmH
+      : ((S.kessler && S.kessler.on && S.kessler.rainRate > 0.05) ? S.kessler.rainRate : 0);
+    let betaPrecip = 0;
+    if (rainR > 0.05) {
+      let maxTop = 0;
+      for (let i = 0; i < layers.length; i++) if (layers[i].coverage > 0.05) maxTop = Math.max(maxTop, layers[i].top);
+      if (z <= maxTop) {
+        betaPrecip = precipExtFromRate(rainR, f.temp);
+        const scaP = 0.995 * betaPrecip;
+        betaExt += betaPrecip;
+        betaSca += scaP;
+        gWeighted += scaP * (f.temp <= 0 ? 0.78 : 0.86);
+      }
+    }
     const betaA = aerosolBetaAt(z);
     const scaA = (S.aerosol && S.aerosol.omega ? S.aerosol.omega : 0.92) * betaA;
     betaExt += betaA;
@@ -113,7 +174,7 @@
     const omegaMix = betaExt > 0 ? betaSca / betaExt : 0.999;
     const gMix = betaSca > 0 ? gWeighted / betaSca : 0.85;
     return {
-      betaExt, betaSca, betaAbs, betaAero: betaA,
+      betaExt, betaSca, betaAbs, betaAero: betaA, betaPrecip,
       omegaMix, gMix,
       lwc: lwcGm3, reUm, veff, frac,
       seedDepletion: f.seedDepletion || 0,
@@ -124,7 +185,7 @@
   function visibilityDetailed(x, y, z, time) {
     const d = detailedAt(x, y, z, A.effectiveLayers(), { x: S.windSpeed, dir: S.windDir }, time);
     const vis = A.visibilityFromExt(d.betaExt);
-    return { vis, beta: d.betaExt, sca: d.betaSca, abs: d.betaAbs, lwc: d.lwc, re: d.reUm, veff: d.veff, frac: d.frac, seedDepletion: d.seedDepletion };
+    return { vis, beta: d.betaExt, betaPrecip: d.betaPrecip, sca: d.betaSca, abs: d.betaAbs, lwc: d.lwc, re: d.reUm, veff: d.veff, frac: d.frac, seedDepletion: d.seedDepletion };
   }
 
   const WORST_OFFS = [[0, 0], [-12, -12], [-12, 0], [-12, 12], [0, -12], [0, 12], [12, -12], [12, 0], [12, 12]];
@@ -200,6 +261,8 @@
     const gainRatio = visAmb > 0 ? visSeed / visAmb : 1;
     const tPlume = A.tempAt(z);
     const wbf = A.wbfVaporDiff ? A.wbfVaporDiff(tPlume) : { diffHpa: 0, siPct: 0 };
+    const icAmb = icingIndexAt(z, amb.lwc, tPlume, amb.re, amb.frac ? amb.frac.water : 1);
+    const icSeed = icingIndexAt(z, seeded.lwc, tPlume, seeded.re, seeded.frac ? seeded.frac.water : 1);
     return {
       active: prevOn,
       agent: sd.agent || 'agi',
@@ -214,6 +277,10 @@
       seededVis: visSeed,
       lwcAmbient: amb.lwc,
       lwcSeeded: seeded.lwc,
+      icingIndexAmbient: icAmb.index,
+      icingIndexSeeded: icSeed.index,
+      icingSeverityAmbient: icAmb.severity,
+      icingSeveritySeeded: icSeed.severity,
       gainRatio,
       cat1Recovered: visSeed >= 550,
     };
@@ -447,7 +514,8 @@
 
   global.Physics = {
     PHASE_EXT, PHASE_OMEGA, PHASE_ORDER,
-    phaseFractions, aerosolBetaAt, currentVeff, detailedAt, visibilityDetailed,
+    phaseFractions, aerosolBetaAt, precipExtFromRate, icingIndexAt, icingDiagnostics,
+    currentVeff, detailedAt, visibilityDetailed,
     worstVisibilityDetailed, seedingDiagnostics, fieldStats, sensitivityGrid, sensitivityOpen,
     setPath, getPath, applyStatePatch,
   };

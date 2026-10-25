@@ -458,6 +458,7 @@
           card(I18N.t('cl.gain'), sd.gainRatio.toFixed(2) + '×') +
           card('CAT-I (≥550m)', sd.cat1Recovered ? '✓ OK' : '✗') +
           card('Δe_wi / S_i', (sd.wbfDiffHpa != null ? sd.wbfDiffHpa.toFixed(3) : '0.000') + ' hPa · ' + (sd.iceSupersatPct != null ? sd.iceSupersatPct.toFixed(1) : '0.0') + '%') +
+          card('飞机积冰指数 (环境→播云)', (sd.icingIndexAmbient != null ? sd.icingIndexAmbient.toFixed(2) : '0.00') + ' → ' + (sd.icingIndexSeeded != null ? sd.icingIndexSeeded.toFixed(2) : '0.00') + ' (' + (sd.icingSeveritySeeded || 'NONE') + ')') +
           (ops ? card('LWP / IWP', (ops.lwp || 0).toFixed(0) + ' / ' + (ops.iwp || 0).toFixed(0) + ' g/m²') +
                  card('CRE_SW / ΔF_Tw', (ops.creSW || 0).toFixed(1) + ' / ' + (ops.twomeyForcing || 0).toFixed(1) + ' W/m²') : '');
       }
