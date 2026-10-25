@@ -286,6 +286,143 @@
     };
   }
 
+  // ETH CLOUDLAB 靶区最佳上风向播撒点自动反演：根据目标坐标 (targetX, targetY)、当前风速/风向及 WBF 冰化-沉降时间尺度，反演无人机最佳上风向投放坐标与催化剂
+  function optimalSeedingPoint(targetX, targetY, opts) {
+    opts = opts || {};
+    const tx = isFinite(targetX) ? targetX : 0;
+    const ty = isFinite(targetY) ? targetY : 0;
+    const layers = A.effectiveLayers();
+    let bestZ = (S.seeding && S.seeding.alt) || 1.1;
+    for (let i = 0; i < layers.length; i++) {
+      const L = layers[i];
+      if (L.coverage >= 0.15) {
+        const zm = 0.5 * (L.base + L.top);
+        if (A.tempAt(zm) < -0.5) { bestZ = +zm.toFixed(2); break; }
+      }
+    }
+    const tSeed = A.tempAt(bestZ);
+    const wbf = A.wbfVaporDiff ? A.wbfVaporDiff(tSeed) : { normFactor: 0.6 };
+    const uMps = Math.max(2, S.windSpeed || 8);
+    // WBF 冰晶生长 + 聚合沉降特征时间约 360~540 s（水汽差越大生长越快），顺风消云峰值距离 d_opt (km)
+    const tauGlacSec = 480 / Math.max(0.35, 0.4 + 0.8 * (wbf.normFactor || 0.5));
+    const dOptKm = Math.max(3.0, Math.min(9.5, +(uMps * tauGlacSec / 1000).toFixed(2)));
+    const goRad = ((S.windDir || 270) + 180) * Math.PI / 180;
+    const ux = Math.sin(goRad), uy = Math.cos(goRad);
+    const x0 = +(tx - ux * dOptKm).toFixed(2);
+    const z0 = +(ty - uy * dOptKm).toFixed(2);
+    const recAgent = tSeed <= -5.0 ? 'agi' : 'co2';
+    if (opts.apply && S.seeding) {
+      S.seeding.on = true;
+      S.seeding.x0 = x0;
+      S.seeding.z0 = z0;
+      S.seeding.alt = bestZ;
+      S.seeding.agent = recAgent;
+    }
+    return {
+      targetX: tx, targetY: ty,
+      x0, z0, altKm: bestZ,
+      upwindDistKm: dOptKm,
+      recommendedAgent: recAgent,
+      tempAtSeedC: +tSeed.toFixed(1),
+      glaciationTimeSec: Math.round(tauGlacSec),
+    };
+  }
+
+  // ILS 3° 进近下滑道斜程能见度 (Slant-Range Visibility, SVR) 与决断高 (DH) 目视参考接触判定
+  function approachSlantProfile(opts) {
+    opts = opts || {};
+    const gsDeg = opts.glideslopeDeg || 3.0;
+    const tanGs = Math.tan(gsDeg * Math.PI / 180);
+    const rwyDesig = String(opts.rwyDesignator || '27L').toUpperCase();
+    const m = rwyDesig.match(/(\d{1,2})[LCR]?/);
+    const rwyHeadingDeg = m ? Math.min(36, Math.max(1, parseInt(m[1], 10))) * 10 : 270;
+    // 飞机位于跑道入口外侧（逆跑道落地磁航向方向）沿下滑道向接地区 (0,0,0) 进近
+    const appFromRad = ((rwyHeadingDeg + 180) % 360) * Math.PI / 180;
+    const ax = Math.sin(appFromRad), ay = Math.cos(appFromRad);
+    const layers = A.effectiveLayers();
+    const wind = { x: S.windSpeed, dir: S.windDir };
+    const time = opts.time || 0;
+    const kLight = opts.isNight ? 2.0 : 1.5; // HI 进近灯增强因子
+
+    function slantAtHeightM(hM) {
+      const zAcKm = Math.max(0.01, hM / 1000);
+      const dHorizKm = zAcKm / tanGs;
+      const slantDistM = Math.sqrt(hM * hM + (dHorizKm * 1000) * (dHorizKm * 1000));
+      const nSteps = 12;
+      let betaSum = 0;
+      for (let s = 0; s < nSteps; s++) {
+        const frac = (s + 0.5) / nSteps; // 0=机头位置, 1=跑道接地区/进近灯排
+        const sx = ax * dHorizKm * (1 - frac);
+        const sy = ay * dHorizKm * (1 - frac);
+        const sz = Math.max(0.005, zAcKm * (1 - frac));
+        const det = detailedAt(sx, sy, sz, layers, wind, time);
+        betaSum += det.betaExt;
+      }
+      const meanBeta = betaSum / nSteps;
+      const svrM = Math.min(10000, Math.round(A.visibilityFromExt(meanBeta)));
+      const slantRvrM = Math.min(2000, Math.round(svrM * kLight));
+      return {
+        heightM: hM,
+        heightFt: Math.round(hM / 0.3048),
+        distFromTdzKm: +dHorizKm.toFixed(2),
+        slantDistToTdzM: Math.round(slantDistM),
+        meanBeta: +meanBeta.toFixed(5),
+        svrM,
+        slantRvrM,
+        visualContact: slantRvrM >= Math.min(1200, slantDistM * 0.72),
+      };
+    }
+
+    const surfDet = detailedAt(0, 0, 0.015, layers, wind, time);
+    const horizVisSurfaceM = Math.min(10000, Math.round(A.visibilityFromExt(surfDet.betaExt)));
+    const dhCat1 = slantAtHeightM(60); // CAT-I DH = 60m (200ft)
+    const dhCat2 = slantAtHeightM(30); // CAT-II DH = 30m (100ft)
+    const profile = [300, 180, 120, 90, 60, 30, 15].map(slantAtHeightM);
+    const svrRatio = +(dhCat1.svrM / Math.max(25, horizVisSurfaceM)).toFixed(2);
+    return {
+      rwyDesignator: rwyDesig,
+      glideslopeDeg: gsDeg,
+      horizVisSurfaceM,
+      svrAtCat1DhM: dhCat1.svrM,
+      slantRvrAtCat1DhM: dhCat1.slantRvrM,
+      svrAtCat2DhM: dhCat2.svrM,
+      svrRatio,
+      visualContactAtCat1Dh: dhCat1.visualContact,
+      visualContactAtCat2Dh: dhCat2.visualContact,
+      shallowFogIllusion: svrRatio >= 1.35 && horizVisSurfaceM < 800,
+      elevatedCloudTrap: svrRatio <= 0.72 && dhCat1.svrM < 800,
+      profile,
+    };
+  }
+
+  // 机载与终端区湍流涡旋耗散率 (EDR, m^(2/3)/s, ICAO Annex 3 标准) 与 0–500 m 低空垂直风切变 (LLWS, kt/100ft) 诊断
+  function turbulenceAndShearDiagnostics(time) {
+    const conv = Math.max(0, S.convection || 0) / 100;
+    const uSurf = Math.max(0, S.windSpeed || 0);
+    const hasCb = !!(S.layers && S.layers.cb && S.layers.cb.on && S.layers.cb.coverage > 0.1);
+    const hasCu = !!(S.layers && S.layers.cu && S.layers.cu.on && S.layers.cu.coverage > 0.1);
+    const rainR = (S.precipRateMmH != null && S.precipRateMmH > 0)
+      ? S.precipRateMmH
+      : ((S.kessler && S.kessler.on && S.kessler.rainRate > 0) ? S.kessler.rainRate : 0);
+    // EDR 由对流有效位能/对流度、积雨云/积云湍流夹卷及边界层机械切变合成
+    const edrBase = 0.04 + 0.28 * Math.pow(conv, 1.25) + (hasCb ? 0.18 * S.layers.cb.density : (hasCu ? 0.08 * S.layers.cu.density : 0)) + 0.004 * uSurf;
+    const edrMax = +Math.min(0.85, edrBase).toFixed(2);
+    const edrSeverity = edrMax >= 0.45 ? 'SEVERE' : (edrMax >= 0.25 ? 'MODERATE' : (edrMax >= 0.15 ? 'LIGHT' : 'NONE'));
+    // 0–500 m (1640 ft) 低空垂直风切变 + 雷暴下击暴流外流切变 (kt / 100 ft)
+    const blShearKt100Ft = (uSurf * 0.42 / 0.514444) / 10;
+    const microburstOutflowKt100Ft = hasCb ? (1.8 * conv * S.layers.cb.density + 0.06 * rainR) : 0;
+    const llwsKtPer100Ft = +(blShearKt100Ft + microburstOutflowKt100Ft).toFixed(2);
+    const microburstRisk = hasCb && conv >= 0.65 && (rainR >= 8 || S.layers.cb.density >= 0.75);
+    const llwsAlert = llwsKtPer100Ft >= 5.0 || microburstRisk;
+    return {
+      edrMax,
+      edrSeverity,
+      llwsKtPer100Ft,
+      microburstRisk,
+      llwsAlert,
+    };
+  }
+
   // —— 水平能见度场 + 统计量 ——
   function fieldStats(opts) {
     opts = opts || {};
@@ -516,7 +653,9 @@
     PHASE_EXT, PHASE_OMEGA, PHASE_ORDER,
     phaseFractions, aerosolBetaAt, precipExtFromRate, icingIndexAt, icingDiagnostics,
     currentVeff, detailedAt, visibilityDetailed,
-    worstVisibilityDetailed, seedingDiagnostics, fieldStats, sensitivityGrid, sensitivityOpen,
+    worstVisibilityDetailed, seedingDiagnostics, optimalSeedingPoint,
+    approachSlantProfile, turbulenceAndShearDiagnostics,
+    fieldStats, sensitivityGrid, sensitivityOpen,
     setPath, getPath, applyStatePatch,
   };
 })(window);

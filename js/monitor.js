@@ -223,6 +223,27 @@
     mark(A.lclHeight(), '#ffd166', 'LCL');
     mark(A.freezingLevel(), '#7c9cff', '0°');
     mark(A.STATE.sliceAlt, '#36d1c4', I18N.t('mon.sliceMark'));   // 与 3D 亮线、右侧高度轴同一高度
+
+    // 叠加气块干/湿绝热抬升轨迹 Tp(z) 与 LFC / EL / CAPE / CIN 热力学指示
+    if (typeof A.parcelThermodynamics === 'function') {
+      const th = A.parcelThermodynamics();
+      if (th && th.parcelPath && th.parcelPath.length) {
+        ctx.strokeStyle = '#ff9f1c'; ctx.lineWidth = 1.4; ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        for (let i = 0; i < th.parcelPath.length; i++) {
+          const pt = th.parcelPath[i];
+          const x = xOf(pt.Tp), y = yOf(pt.z);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (th.lfcKm != null) mark(th.lfcKm, '#ff9f1c', 'LFC');
+        if (th.elKm != null) mark(th.elKm, '#f77f00', 'EL');
+        ctx.fillStyle = '#ffd166';
+        ctx.font = '10px sans-serif';
+        ctx.fillText(`CAPE ${th.capeJkg} · CIN ${th.cinJkg} J/kg · LI ${th.liftedIndex}`, padL + 6, padT + 11);
+      }
+    }
   }
 
   // ----------------- 水平切片 -----------------

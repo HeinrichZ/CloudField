@@ -148,14 +148,20 @@ r_e 的单一来源由 `micro.reMode` 决定：`derived`（默认）用 `effRadi
 
 - **禁止使用 CMV 的三种情况**：① 已有 RVR 直接观测报告；② 计算起飞最低标准；③ RVR 最低标准低于 800m。
 - **运行类别预设与场景联动**：CAVOK / VMC / CAT-I(≥550m, Ceiling≥60m) / CAT-II(300–550m, Ceiling≥30m) / CAT-IIIA(175–300m) / CAT-IIIB(50–175m) / CAT-IIIC(0m)，支持与当前三维场景最差能见度及最低 BKN/OVC 云底高双向同步。
+- **跑道三段式 RVR（TDZ / MID / END）监测**：沿 3.6 km 标准跑道轴线分别采样接地区（TDZ，$-1.5\text{ km}$）、中间段（MID，$0\text{ km}$）与停止端（END，$+1.5\text{ km}$）三组 RVR，支持局部平流雾或人工消雾作业下的非均匀跑道放行评估。
+- **ILS $3^\circ$ 进近下滑道斜程能见度（SVR）与决断高（DH）目视判定**：沿 $3^\circ$ 下滑道从机头至接地区积分斜向路径消光 $\bar{\beta}_{\text{slant}}$，计算斜程能见度 $\text{SVR}$ 与斜程 RVR，评估飞行员在决断高（CAT-I DH=60m / CAT-II DH=30m）能否建立目视参考，识别辐射浅雾假象（高空看清地面、进近入雾失明）与低碎云陷阱。
 - **跑道风分量分解与超限告警**：按跑道识别码（如 `27L` → 磁航向 $270^\circ$）分解顶风（Headwind）、顺风（Tailwind）与正侧风（Crosswind），当顺风 $>10\text{ kt}$ 或阵风侧风 $>20\text{ kt}$ 时触发超限提示。
-- **飞机积冰与过冷大水滴（SLD）风险指数**：在 $0 \sim -38^\circ\text{C}$ 过冷温区耦合过冷水含量（SLWC）、温度收集效率与过冷大水滴（$r_e > 12\ \mu\text{m}$）碰撞放大因子，评估积冰严重度（`NONE / LIGHT / MODERATE / SEVERE`）及人工播云冰化后的积冰消减幅度。
+- **机载 X 波段气象雷达（WXR）、飞机积冰（SLD）、湍流耗散率（EDR）与低空风切变（LLWS）**：
+  - 机载 X 波段（9.3 GHz，ARINC 708 四色规范）计入双程雨衰 $k_{\text{X}} = 0.014 R^{1.15}\ \text{dB/km}$ 与 PAC 强回波后方雨衰阴影告警；
+  - 在 $0 \sim -38^\circ\text{C}$ 过冷温区耦合过冷水含量（SLWC）、温度收集效率与过冷大水滴（$r_e > 12\ \mu\text{m}$）碰撞放大因子，评估积冰严重度（`NONE / LIGHT / MODERATE / SEVERE`）及人工播云冰化后的积冰消减幅度；
+  - 输出国际民航标准湍流涡旋耗散率 $\text{EDR}$（$\text{m}^{2/3}\text{s}^{-1}$）与 $0\text{–}500\text{ m}$ 低空垂直风切变（$\text{kt/100ft}$）。
 
-## 八、坐标系、机场表、高原 QFE/QNH 与低温高度表修正
+## 八、坐标系、机场表、高原 QFE/QNH、密度高度（DA）与低温高度表修正
 
 - WGS-84 经纬度；海拔为场压面近似，EGM96 大地水准面偏移由 `Coord.geoidOffset` 占位（可由 Bridge 提供网格）。
 - 米 ↔ 百英尺：`1×100ft = 30.48 m`。
 - **高原与高高原机场 QNH ↔ QFE 换算**：按机场标高 $h_{\text{elev}}$ 与地面温度 $T_0$ 执行压高互逆换算 $\text{QFE} = \text{QNH} \cdot \exp\left(-\frac{g \cdot h_{\text{elev}}}{R_d \cdot \bar{T}}\right)$，并自动标注一般高原机场（$\ge 1524\text{ m}$）与高高原机场（$\ge 2438\text{ m}$）。
+- **密度高度（Density Altitude，DA）与虚温修正**：计算气压高度 $\text{PA}_{\text{ft}}$ 与水汽虚温 $T_v$，按 $\text{DA}_{\text{ft}} = \text{PA}_{\text{ft}} + 118.8 \cdot (T_v - T_{\text{ISA}})$ 输出密度高度、相对空气密度比 $\sigma = \rho/\rho_0$ 及起飞滑跑距离增量百分比。
 - **ICAO Doc 8168 (PANS-OPS) 低温气压高度表修正**：当机场地面温度低于标准大气（ISA）时，计算决断高（DH/MDH）的低温高度正修正量 $\Delta H = H \cdot \frac{15 - T_0}{273.15 + T_0 - 0.5 L_0 (H + H_{\text{elev}})}$。
 - 中国民航机场表为校核子集（63 个），完整 ~250 由 Bridge 经 `/api/airports` 提供，`loadAirportTable` 可注入。
 

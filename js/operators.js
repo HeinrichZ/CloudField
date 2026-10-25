@@ -161,9 +161,10 @@
 
     // 耦合当前所选微物理方案（Kessler / KK2000 / SB06）的准稳态/实时雨强与 WBF 播云雪强（Marshall–Palmer Z-R 关系）
     let ZePrecip = 0;
+    let rainMmH = (S.precipRateMmH != null && S.precipRateMmH > 0) ? S.precipRateMmH : 0;
     if (global.Kessler) {
       const kr = global.Kessler.readout();
-      let rainMmH = kr.rainRate || 0;
+      if (kr.rainRate > rainMmH) rainMmH = kr.rainRate;
       if (rainMmH <= 1e-4 && global.Kessler.compareSchemes && (lwcLiq + lwcIce) > 0.02) {
         const sc = (S.micro && S.micro.scheme) || 'kessler';
         // 由当前激活云层的实际云核液水含量与空气密度诊断云内代表混合比 qcCore（无硬编码保底）
@@ -188,7 +189,12 @@
     }
     const Ze = ZeCloudLiq + ZeCloudIce + ZePrecip;
     const dBZ = 10 * Math.log10(Math.max(1e-4, Ze));
-    return { Ze, dBZ, lwcLiq, lwcIce, ZePrecip, m6Factor };
+    // 机载 X 波段气象雷达 (Airborne WXR, 9.3 GHz, ARINC 708 标准)：双程雨衰 k_X = 0.014·R^1.15 dB/km（按 15 km 强降水核穿透计）与四色等级
+    const xBandTwoWayAttenDb = +(2 * 15 * 0.014 * Math.pow(Math.max(0, rainMmH), 1.15)).toFixed(2);
+    const dBZXBand = +(dBZ - xBandTwoWayAttenDb).toFixed(1);
+    const wxrColor = dBZ >= 40 ? 'RED' : (dBZ >= 30 ? 'YELLOW' : (dBZ >= 20 ? 'GREEN' : 'BLACK'));
+    const pacShadowAlert = xBandTwoWayAttenDb >= 6.0;
+    return { Ze, dBZ, dBZXBand, xBandTwoWayAttenDb, wxrColor, pacShadowAlert, rainMmH: +rainMmH.toFixed(2), lwcLiq, lwcIce, ZePrecip, m6Factor };
   }
 
   // opts.all = true 时忽略开关，返回全部算子（供批处理/报告需要完整字段时使用）
@@ -241,6 +247,12 @@
     if (pick('satellite')) out.satelliteTb = satelliteTb(time, cs);
     if (pick('lidar')) out.lidar = lidar(time);
     if (pick('radar')) out.radar = radar(time);
+    if (global.Physics && global.Physics.turbulenceAndShearDiagnostics) {
+      out.turbulence = global.Physics.turbulenceAndShearDiagnostics(time);
+    }
+    if (A.parcelThermodynamics) {
+      out.thermo = A.parcelThermodynamics();
+    }
     return out;
   }
 

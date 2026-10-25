@@ -214,5 +214,33 @@
     };
   }
 
-  global.Kessler = { ensure, step, reset, readout, ratesForScheme, wbfRate, compareSchemes, VT, TAU_COND };
+  // 微物理源汇过程收支拆解：诊断自动转化 (P_ac)、碰并收集 (P_gr) 与 WBF 播云冰化 (P_wbf) 的速率及贡献占比
+  function processBudget(opts) {
+    opts = opts || {};
+    const scheme = opts.scheme || (S.micro && S.micro.scheme) || 'kessler';
+    const qc = opts.qc != null ? opts.qc : 1.5e-3;
+    const qr = opts.qr != null ? opts.qr : 2.5e-4;
+    const zMid = opts.zMid != null ? opts.zMid : (S.seeding && S.seeding.alt ? S.seeding.alt : 1.1);
+    const r = ratesForScheme(scheme, qc, qr, opts);
+    const pwbf = wbfRate(qc, zMid);
+    const total = r.pac + r.pgr + pwbf;
+    const denom = total > 1e-15 ? total : 1;
+    const pacPct = total > 1e-15 ? +(r.pac / denom * 100).toFixed(1) : 0;
+    const pgrPct = total > 1e-15 ? +(r.pgr / denom * 100).toFixed(1) : 0;
+    const pwbfPct = total > 1e-15 ? +(pwbf / denom * 100).toFixed(1) : 0;
+    const dominantProcess = total <= 1e-15 ? 'NONE' : (pwbf >= r.pac && pwbf >= r.pgr ? 'WBF' : (r.pgr >= r.pac ? 'ACCRETION' : 'AUTOCONV'));
+    return {
+      scheme,
+      pacRate: r.pac,
+      pgrRate: r.pgr,
+      pwbfRate: pwbf,
+      totalRate: total,
+      pacPct,
+      pgrPct,
+      pwbfPct,
+      dominantProcess,
+    };
+  }
+
+  global.Kessler = { ensure, step, reset, readout, ratesForScheme, wbfRate, compareSchemes, processBudget, VT, TAU_COND };
 })(window);

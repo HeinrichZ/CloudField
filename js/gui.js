@@ -433,6 +433,14 @@
       notifyChange();
       refreshCloudLab();
     }));
+    row.appendChild(btn('🎯 自动推算跑道最佳播撒点', () => {
+      if (global.Physics && global.Physics.optimalSeedingPoint) {
+        global.Physics.optimalSeedingPoint(0, 0, { apply: true });
+        refreshAll();
+        notifyChange();
+        refreshCloudLab();
+      }
+    }));
     root.appendChild(row);
     const cv = document.createElement('canvas'); cv.id = 'cl-scheme-cv'; cv.width = 420; cv.height = 175; cv.className = 'adv-canvas'; root.appendChild(cv);
     const schemeStats = document.createElement('div'); schemeStats.id = 'cl-scheme-stats'; schemeStats.className = 'stat-cards'; root.appendChild(schemeStats);
@@ -443,11 +451,13 @@
         const cmp = global.Kessler.compareSchemes();
         if (global.Monitor && global.Monitor.drawSchemeComparison) global.Monitor.drawSchemeComparison(cv, cmp);
         const cur = cmp.atCurrentN;
+        const bgt = global.Kessler.processBudget ? global.Kessler.processBudget() : null;
         schemeStats.innerHTML =
           card('Kessler (1969)', cur.kessler.toFixed(2) + ' mm/h') +
           card('KK2000 (2-Mom)', cur.kk2000.toFixed(2) + ' mm/h') +
           card('ICON-SB06 (2-Mom)', cur.sb06.toFixed(2) + ' mm/h') +
-          card('Δ(KK2000−Kessler)', (cur.diffKK_Kessler >= 0 ? '+' : '') + cur.diffKK_Kessler.toFixed(2) + ' mm/h');
+          card('Δ(KK2000−Kessler)', (cur.diffKK_Kessler >= 0 ? '+' : '') + cur.diffKK_Kessler.toFixed(2) + ' mm/h') +
+          (bgt ? card('源汇收支 (P_ac / P_gr / WBF)', bgt.pacPct + '% / ' + bgt.pgrPct + '% / ' + bgt.pwbfPct + '%') : '');
       }
       if (global.Physics && global.Physics.seedingDiagnostics) {
         const sd = global.Physics.seedingDiagnostics(0);
@@ -527,7 +537,12 @@
         if (o.albedo != null) rows.push(card(I18N.t('op.albedo'), o.albedo.toFixed(3)));
         if (o.satelliteTb != null) rows.push(card(I18N.t('op.satellite'), o.satelliteTb.toFixed(1) + ' K'));
         if (o.lidar) rows.push(card(I18N.t('op.lidar'), o.lidar.betaBack.toExponential(2)));
-        if (o.radar) rows.push(card(I18N.t('op.radar'), o.radar.dBZ.toFixed(1) + ' dBZ'));
+        if (o.radar) {
+          rows.push(card(I18N.t('op.radar'), o.radar.dBZ.toFixed(1) + ' dBZ'));
+          rows.push(card('机载 WXR (X波段)', o.radar.dBZXBand.toFixed(1) + ' dBZ · ' + o.radar.wxrColor + (o.radar.pacShadowAlert ? ' [PAC雨衰告警]' : '')));
+        }
+        if (o.turbulence) rows.push(card('湍流 EDR / 低空风切变', o.turbulence.edrMax.toFixed(2) + ' (' + o.turbulence.edrSeverity + ') · ' + o.turbulence.llwsKtPer100Ft + ' kt/100ft'));
+        if (o.thermo) rows.push(card('CAPE / CIN', o.thermo.capeJkg + ' / ' + o.thermo.cinJkg + ' J/kg'));
         if (o.extSplit) rows.push(card(I18N.t('op.extSplit'), (o.extSplit.ratio * 100).toFixed(0) + '%'));
         const oe = document.getElementById('sp-ops'); if (oe) oe.innerHTML = rows.join('');
       }

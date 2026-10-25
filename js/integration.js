@@ -539,7 +539,45 @@
         crosswindWarn: maxCross > 20,
       };
     }
-    return { K_TABLE, calcCMV, rvrToVis, forbiddenCases, PRESETS, kOf, classifyMinima, currentSceneMinima, runwayWindComponents };
+    // 跑道三段式 RVR (接地区 TDZ / 中间段 MID / 停止端 END) 空间非均匀采样与 METAR 报组生成（沿 3.6 km 标准跑道轴线采样）
+    function runwayThreePointRVR(rwyDesignator, isNight, lightType, time) {
+      const rwy = String(rwyDesignator || '27L').toUpperCase();
+      const m = rwy.match(/(\d{1,2})[LCR]?/);
+      const num = m ? Math.min(36, Math.max(1, parseInt(m[1], 10))) : 27;
+      const rwyHeading = num * 10;
+      const rad = rwyHeading * Math.PI / 180;
+      const ux = Math.sin(rad), uy = Math.cos(rad);
+      const k = kOf(lightType || 'HI_approach', !!isNight) || 1.5;
+      function rvrAtOffsetKm(offsetKm) {
+        const px = ux * offsetKm, py = uy * offsetKm;
+        const vd = (global.Physics && global.Physics.visibilityDetailed)
+          ? global.Physics.visibilityDetailed(px, py, 0.02, time || 0)
+          : { vis: A.visibilityAtAltitude(0.02, A.effectiveLayers(), { x: A.STATE.windSpeed, dir: A.STATE.windDir }, time || 0) };
+        const visM = isFinite(vd.vis) ? vd.vis : 10000;
+        const rawRvr = Math.round(visM * k);
+        return Math.max(50, Math.min(2000, Math.round(rawRvr / 25) * 25));
+      }
+      const tdz = rvrAtOffsetKm(-1.5);
+      const mid = rvrAtOffsetKm(0.0);
+      const end = rvrAtOffsetKm(1.5);
+      const fmt4 = v => String(v).padStart(4, '0');
+      const metarGroup = `R${rwy}/${fmt4(tdz)}N R${rwy}/${fmt4(mid)}N R${rwy}/${fmt4(end)}N`;
+      const minRvr = Math.min(tdz, mid, end);
+      const maxRvr = Math.max(tdz, mid, end);
+      return {
+        runway: rwy,
+        rwyHeading,
+        tdzM: tdz,
+        midM: mid,
+        endM: end,
+        spreadM: maxRvr - minRvr,
+        cat1Ok: tdz >= 550,
+        cat2Ok: tdz >= 300 && mid >= 125,
+        cat3aOk: tdz >= 175 && mid >= 125 && end >= 75,
+        metarGroup,
+      };
+    }
+    return { K_TABLE, calcCMV, rvrToVis, forbiddenCases, PRESETS, kOf, classifyMinima, currentSceneMinima, runwayWindComponents, runwayThreePointRVR };
   })();
 
   // =====================================================================
@@ -739,8 +777,40 @@
         needsCorrection: tSurf <= 0 || correctionFt >= 10,
       };
     }
+    // 机场气压高度 (PA) 与含高湿虚温修正的密度高度 (Density Altitude, DA) 计算（高原/高温机场起飞性能与最大起飞重量 MTOW 核算）
+    function densityAltitude(qnhHpa, elevM, tempC, rhPct) {
+      const qnh = isFinite(qnhHpa) ? qnhHpa : 1013.25;
+      const hM = Math.max(0, isFinite(elevM) ? elevM : 0);
+      const elevFt = Math.round(hM / 0.3048);
+      const T = isFinite(tempC) ? tempC : 15;
+      const rh = Math.max(0, Math.min(100, isFinite(rhPct) ? rhPct : 50));
+      const pressureAltFt = Math.round(elevFt + (1013.25 - qnh) * 27.3);
+      const qfeHpa = qnhToQfe(qnh, hM, T);
+      const es = 6.1078 * Math.exp((17.27 * T) / (T + 237.3));
+      const e = (rh / 100) * es;
+      // 虚温 T_v (°C)：计入水汽分子量小于干空气导致的密度折减
+      const TvC = ((T + 273.15) / Math.max(0.7, 1 - 0.378 * (e / Math.max(200, qfeHpa)))) - 273.15;
+      const isaTempC = +(15 - 0.00198 * pressureAltFt).toFixed(1);
+      const isaDevVirtualC = +(TvC - isaTempC).toFixed(1);
+      const densityAltFt = Math.round(pressureAltFt + 118.8 * (TvC - isaTempC));
+      const densityAltM = Math.round(densityAltFt * 0.3048);
+      const sigma = +((qfeHpa / 1013.25) * (288.15 / (TvC + 273.15))).toFixed(3);
+      const rollPenaltyPct = Math.max(0, Math.round((1 / Math.max(0.35, sigma) - 1) * 100));
+      return {
+        elevFt,
+        pressureAltFt,
+        densityAltFt,
+        densityAltM,
+        virtualTempC: +TvC.toFixed(1),
+        isaTempC,
+        isaDevVirtualC,
+        densityRatioSigma: sigma,
+        takeoffRollIncreasePct: rollPenaltyPct,
+        highDaWarn: densityAltFt - elevFt >= 1500 || densityAltFt >= 6500,
+      };
+    }
 
-    return { TABLE, elevationM, qnhToQfe, qfeToQnh, coldTempAltitudeCorrection, setActiveAirport, mToHundredFt, hundredFtToM, search, byICAO, loadAirportTable, geoidOffset, airportName };
+    return { TABLE, elevationM, qnhToQfe, qfeToQnh, coldTempAltitudeCorrection, densityAltitude, setActiveAirport, mToHundredFt, hundredFtToM, search, byICAO, loadAirportTable, geoidOffset, airportName };
   })();
 
   // =====================================================================
@@ -1045,7 +1115,11 @@
           const windKt = (A.STATE.windSpeed || 0) / 0.514444;
           const rwWind = VisConv.runwayWindComponents(rwyVal, A.STATE.windDir || 0, windKt, windKt);
           const windNote = `\n跑道风分解 (${rwyVal}, 磁航向 ${rwWind.rwyHeading}°): 顶风 ${rwWind.headwindKt} kt · 顺风 ${rwWind.tailwindKt} kt${rwWind.tailwindWarn ? ' [⚠️超10kt限]' : ''} · 侧风 ${rwWind.crosswindKt} kt${rwWind.crosswindWarn ? ' [⚠️超20kt限]' : ''}`;
-          out.textContent = `RVR ${curRvr} m${I18N.t('vis.calcRvrRunway')}${rwyVal}）\n${I18N.t('vis.calcRvr')}${eqVis} m → 运行等级判定: ${cls.category}${windNote}`;
+          const rvr3 = VisConv.runwayThreePointRVR(rwyVal, false, 'HI_approach', 0);
+          const rvr3Note = `\n场景跑道三段式 RVR: TDZ=${rvr3.tdzM}m · MID=${rvr3.midM}m · END=${rvr3.endM}m (${rvr3.metarGroup})`;
+          const gsProf = (global.Physics && global.Physics.approachSlantProfile) ? global.Physics.approachSlantProfile({ rwyDesignator: rwyVal }) : null;
+          const gsNote = gsProf ? `\nILS 3° 下滑道斜程能见度 (CAT-I DH=60m/200ft): SVR=${gsProf.svrAtCat1DhM}m (斜程RVR=${gsProf.slantRvrAtCat1DhM}m, 斜平比=${gsProf.svrRatio}×) → ${gsProf.visualContactAtCat1Dh ? '✓ 决断高可建立目视参考' : '✗ 决断高无法建立目视参考（需复飞）'}` : '';
+          out.textContent = `RVR ${curRvr} m${I18N.t('vis.calcRvrRunway')}${rwyVal}）\n${I18N.t('vis.calcRvr')}${eqVis} m → 运行等级判定: ${cls.category}${windNote}${rvr3Note}${gsNote}`;
         };
         area.querySelector('#i-rwy').oninput = area.querySelector('#i-rvr').oninput;
         i.oninput();
@@ -1142,6 +1216,7 @@
       const qfe = Coord.qnhToQfe(qnh, a.elev, A.STATE.surfaceTemp);
       const elevFt = Math.round(a.elev / 0.3048);
       const coldCorr = Coord.coldTempAltitudeCorrection(200, elevFt, A.STATE.surfaceTemp);
+      const daInfo = Coord.densityAltitude(qnh, a.elev, A.STATE.surfaceTemp, A.STATE.surfaceRH);
       const isPlateau = a.elev >= 2438 ? '高高原机场 (≥8000ft)' : (a.elev >= 1524 ? '一般高原机场 (≥5000ft)' : '平原/丘陵机场');
       detailBox.innerHTML = `<div class="ap-detail" style="padding:6px 8px;border:1px solid #2b3f66;border-radius:4px;background:rgba(16,26,46,0.65)">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -1151,6 +1226,7 @@
         <div>${I18N.t('airport.wgsLat')}：${a.lat.toFixed(4)}° · ${I18N.t('airport.wgsLon')}：${a.lon.toFixed(4)}°</div>
         <div>${I18N.t('airport.elev')}：${a.elev} m = ${Coord.mToHundredFt(a.elev).toFixed(1)}×100ft (${elevFt} ft)</div>
         <div>气压换算：当前 QNH=${qnh} hPa → 场面气压 <b>QFE=${qfe} hPa</b> (压差 ${(qnh - qfe).toFixed(1)} hPa)</div>
+        <div>密度高度 (DA)：<b>${daInfo.densityAltFt} ft</b> (${daInfo.densityAltM} m, 气压高度 PA=${daInfo.pressureAltFt} ft, 虚温 Tv=${daInfo.virtualTempC}°C, σ=${daInfo.densityRatioSigma}, 起飞滑跑增量 +${daInfo.takeoffRollIncreasePct}%)${daInfo.highDaWarn ? ' <span style="color:#ff6b6b">[⚠️高温/高原减载告警]</span>' : ''}</div>
         <div>低温高度修正 (ICAO Doc 8168, DH=200ft, T=${A.STATE.surfaceTemp}°C, ΔISA=${coldCorr.isaDevC >= 0 ? '+' : ''}${coldCorr.isaDevC}°C)：修正后 DH=<b>${coldCorr.correctedDhFt} ft</b> (+${coldCorr.correctionFt} ft)${coldCorr.needsCorrection ? ' <span style="color:#ff9f1c">[需执行低温高度修正]</span>' : ''}</div>
       </div>`;
       const btnSet = detailBox.querySelector('#ap-set-active');

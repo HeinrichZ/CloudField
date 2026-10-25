@@ -201,6 +201,72 @@
     return Math.max(0, T0 / STATE.lapseRate);
   }
 
+  // 气块干/湿绝热抬升热力学诊断：计算气块状态曲线 Tp(z)、抬升凝结高度 LCL、自由对流高度 LFC、平衡高度 EL、对流有效位能 CAPE (J/kg)、对流抑制能量 CIN (J/kg) 与抬升指数 LI
+  function parcelThermodynamics(opts) {
+    opts = opts || {};
+    const gammaD = Math.max(4, STATE.dryLapseRate || 9.8); // K/km
+    const zLcl = lclHeight();
+    const convExcess = opts.deltaT != null ? opts.deltaT : (2.2 * Math.max(0, (STATE.convection || 0) / 100));
+    const Tp0 = tempAt(0) + convExcess;
+    const dzKm = 0.2;
+    const dzM = dzKm * 1000;
+    const Lv = 2.501e6, Cp = 1004, eps = 0.622;
+    let Tp = Tp0;
+    let lfcKm = null, elKm = null;
+    let cape = 0, cin = 0;
+    let passedLfc = false;
+    let tpAt55 = null, tEnvAt55 = null;
+    const parcelPath = [];
+
+    for (let z = 0; z <= MAX_ALT + 1e-6; z = +(z + dzKm).toFixed(2)) {
+      const Tenv = tempAt(z);
+      const pHpa = pressureAt(z);
+      if (z === 0) {
+        Tp = Tp0;
+      } else if (z <= zLcl) {
+        Tp = Tp0 - gammaD * z;
+      } else {
+        const Tk = Tp + 273.15;
+        const es = esWater(Tp);
+        const rs = eps * es / Math.max(10, pHpa - es);
+        const num = 1 + (Lv * rs) / (R * Tk);
+        const den = 1 + (eps * Lv * Lv * rs) / (Cp * R * Tk * Tk);
+        const gammaM = Math.max(3.2, Math.min(gammaD, gammaD * (num / den))); // K/km
+        Tp = Tp - gammaM * dzKm;
+      }
+      parcelPath.push({ z, Tp: +Tp.toFixed(2), Tenv: +Tenv.toFixed(2) });
+      if (Math.abs(z - 5.4) < 0.11) {
+        tpAt55 = Tp;
+        tEnvAt55 = Tenv;
+      }
+      const buoy = G * ((Tp - Tenv) / (Tenv + 273.15)); // m/s²
+      if (z >= zLcl) {
+        if (Tp > Tenv) {
+          if (lfcKm === null) {
+            lfcKm = z;
+            passedLfc = true;
+          }
+          cape += buoy * dzM;
+          elKm = z;
+        } else if (!passedLfc && z <= 6.0) {
+          cin += Math.abs(buoy) * dzM;
+        }
+      } else if (!passedLfc && Tp < Tenv) {
+        cin += Math.abs(buoy) * dzM;
+      }
+    }
+    const liftedIndex = (tEnvAt55 != null && tpAt55 != null) ? +(tEnvAt55 - tpAt55).toFixed(1) : 0;
+    return {
+      lclKm: +zLcl.toFixed(2),
+      lfcKm: lfcKm != null ? +lfcKm.toFixed(2) : null,
+      elKm: (elKm != null && lfcKm != null && elKm > lfcKm) ? +elKm.toFixed(2) : null,
+      capeJkg: Math.round(cape),
+      cinJkg: Math.round(cin),
+      liftedIndex,
+      parcelPath,
+    };
+  }
+
   // Murphy & Koop (2005) / Bolton (1980) 液态水与冰晶表面饱和水汽压 (hPa) 及 WBF 热力学水汽压差 Δe_wi(T)
   function esWater(T) {
     return 6.112 * Math.exp((17.67 * T) / (T + 243.5));
@@ -666,7 +732,7 @@
   global.Atmosphere = {
     APP_NAME, SNAPSHOT_VERSION, CLOUD_META, LAYER_ORDER, STATE, SCHEME_LABELS,
     LWC_MAX, KOSCHMEIER_EPS, RHO_W, MAX_ALT, WIND_SCALE,
-    lclHeight, tempAt, dewAt, dewpointFromRH, pressureAt, airDensityAt, freezingLevel,
+    lclHeight, tempAt, dewAt, dewpointFromRH, pressureAt, airDensityAt, freezingLevel, parcelThermodynamics,
     esWater, esIce, wbfVaporDiff, operativeDropConc,
     iceFractionAt, seedingPlumeAt, seedingDepletionAt, seedingIceBoostAt,
     effectiveLayers, sampleFields,

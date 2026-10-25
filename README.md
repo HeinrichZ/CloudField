@@ -17,15 +17,15 @@
 CloudField 将三维实时体积云渲染与云微物理参数化、遥感观测算子及民航运行气象规程结合在同一离线环境中：
 
 - **能见度与多相态消光计算**：基于 `β = 3·LWC/(2·ρ_w·r_e)`（叠加多分散 Mie 有效方差 $\nu_{\text{eff}}$ 修正与非球形冰晶习惯因子）及 Koschmieder 定律 `V = -ln(ε)/β`（ε=0.02）。同时计入边界层气溶胶消光与**云底以下降雨/降雪粒子下落消光**（Marshall–Palmer 雨滴谱与 Sekhon–Srivastava 雪谱经验关系），实时给出 β、LWC、$r_e$、$N_c$ 及垂直廓线对比。
-- **三套微物理参数化并排对比（Kessler / KK2000 / ICON-SB06）**：支持切换 **Kessler 1969（单矩阈值型）**、**KK2000（双矩大涡模拟幂律型）** 与 **ICON-SB06（Seifert & Beheng 2006 双矩谱宽耦合型）**，同屏绘制不同云滴数浓度 $N_c$ 下的准稳态降水率响应曲线，支持气溶胶-上升气流 CCN 活化耦合（Twomey 第一间接效应与 Albrecht 第二间接效应诊断）。
-- **ETH CLOUDLAB 人工播云（WBF 冰化）三维/二维沙盒**：支持点源播撒 AgI 碘化银（$-5^\circ\text{C}$ 阈值）或液态 $\text{CO}_2$（$-0.5^\circ\text{C}$ 阈值），按 Murphy & Koop (2005) 过冷水面与冰面饱和水汽压差 $\Delta e_{wi}(T)$ 驱动 **Wegener–Bergeron–Findeisen（WBF）** 水汽竞争过程，在 3D 视口与 2D 水平剖面中雕刻顺风向高斯扩散**消云沟槽（Seeding Trench）**，定量给出沟槽内能见度增益、跑道 CAT-I 标准恢复情况及播云前后的**飞机积冰指数消减**。
-- **实测探空分段插值（逆温层与冻雨暖鼻层）**：支持导入实测/自定义探空（`z, p, T, Td`），自动识别边界层逆温（Temperature Inversion）与地面负温、高空正温的**冻雨暖鼻层（Warm Nose）**，在三维与二维诊断中按实测折线分段插值温度、露点与气压廓线。
-- **多通道遥感观测算子与辐射能量收支**：计算柱积分液水路径（LWP）、冰水路径（IWP）、总水路径（TWP）、地表向下短波辐照度、云球面反照率、耦合地表反照率的短波云辐射效应（$\text{CRE}_{\text{SW}}$）、Twomey 辐射强迫（$\Delta F_{\text{Twomey}}$）、$10.8\ \mu\text{m}$ 红外窗区卫星亮温、含双程 Beer–Lambert 衰减与退偏比的激光雷达后向散射，以及耦合 Gamma 谱 6 阶矩与降水率的天气雷达反射率（dBZ）。
-- **民航气象报文与复杂运行保障**：
+- **三套微物理参数化并排对比与源汇收支拆解（Kessler / KK2000 / ICON-SB06）**：支持切换 **Kessler 1969（单矩阈值型）**、**KK2000（双矩大涡模拟幂律型）** 与 **ICON-SB06（Seifert & Beheng 2006 双矩谱宽耦合型）**，同屏绘制不同云滴数浓度 $N_c$ 下的准稳态降水率响应曲线，实时拆解**自动转化（$P_{\text{ac}}$）、碰并收集（$P_{\text{gr}}$）与 WBF 冰化（$P_{\text{wbf}}$）**贡献占比，并支持气溶胶-上升气流 CCN 活化耦合（Twomey 第一间接效应与 Albrecht 第二间接效应诊断）。
+- **ETH CLOUDLAB 人工播云（WBF 冰化）三维/二维沙盒与靶区最佳播撒点反演**：支持点源播撒 AgI 碘化银（$-5^\circ\text{C}$ 阈值）或液态 $\text{CO}_2$（$-0.5^\circ\text{C}$ 阈值），按 Murphy & Koop (2005) 过冷水面与冰面饱和水汽压差 $\Delta e_{wi}(T)$ 驱动 **Wegener–Bergeron–Findeisen（WBF）** 水汽竞争过程，在 3D 视口与 2D 水平剖面中雕刻顺风向高斯扩散**消云沟槽（Seeding Trench）**；提供**跑道靶区最佳上风向播撒点自动反演（`optimalSeedingPoint`）**，定量给出沟槽内能见度增益、跑道 CAT-I 标准恢复情况及播云前后的**飞机积冰指数消减**。
+- **热力学探空图解（气块抬升轨迹与 CAPE / CIN）及实测探空分段插值**：底部主导垂直廓线图叠加**被抬升气块干/湿绝热状态曲线 $T_p(z)$**，实时标出抬升凝结高度（LCL）、自由对流高度（LFC）、平衡高度（EL），并计算对流有效位能（CAPE）、对流抑制能量（CIN）与抬升指数（LI）；支持导入实测/自定义探空（`z, p, T, Td`），自动识别边界层逆温（Temperature Inversion）与地面负温、高空正温的**冻雨暖鼻层（Warm Nose）**，按实测折线分段插值温度、露点与气压廓线。
+- **多通道遥感观测算子、机载 X 波段气象雷达（WXR）与辐射能量收支**：计算柱积分液水路径（LWP）、冰水路径（IWP）、总水路径（TWP）、地表向下短波辐照度、云球面反照率、耦合地表反照率的短波云辐射效应（$\text{CRE}_{\text{SW}}$）、Twomey 辐射强迫（$\Delta F_{\text{Twomey}}$）、$10.8\ \mu\text{m}$ 红外窗区卫星亮温、含双程 Beer–Lambert 衰减与退偏比的激光雷达后向散射；同时提供地面 S 波段天气雷达反射率（dBZ）与**机载 X 波段（9.3 GHz，ARINC 708 四色标准）前视气象雷达双程雨衰修正及 PAC 雨衰阴影告警**。
+- **民航地面塔台、签派与机载进近运行支持**：
   - **METAR / SPECI / TAF 解析、质控与反演**：兼容国际标准（KT、Axxxx 英寸汞柱）与中国民航规范（MPS 米/秒风速、CAVOK、NSC/SKC、VVxxx 垂直能见度、近时天气与风切变组）；对低能见度大雾/霾报文自动反演贴地雾层与边界层气溶胶；支持将含 `BECMG` / `TEMPO` / `FM` 的多时段复杂 TAF 报文直接转化为时间序列并绘制能见度演变曲线。
-  - **VIS / RVR / CMV 与跑道放行等级判定**：遵循 ICAO Doc 9365 与 EASA AMC NCO.OP.110，结合有效能见度/RVR 与最低 BKN/OVC 云底高（Ceiling）判定 `CAVOK / VMC / CAT-I / CAT-II / CAT-IIIA~C` 等级，支持与 3D 场景双向同步及跑道磁航向**顶风/顺风/正侧风分量分解与超限告警**。
-  - **高原/高高原机场 QNH↔QFE 与严寒机场高度表修正**：内置中国民航机场表（WGS-84 坐标与海拔），自动识别一般高原（$\ge 1524\text{ m}$）与高高原机场（$\ge 2438\text{ m}$），实时换算修正海平面气压 QNH 与场面气压 QFE，并按 **ICAO Doc 8168 (PANS-OPS)** 计算严寒天气下决断高（DH/MDH）的低温气压高度表正修正量。
-  - **飞机积冰与过冷大水滴（SLD）风险评估**：根据过冷水含量（SLWC）、温度效率窗（$0 \sim -38^\circ\text{C}$）与有效滴径 $r_e$ 计算飞机积冰严重度（`NONE / LIGHT / MODERATE / SEVERE`）与 SLD 告警。
+  - **VIS / RVR / CMV、跑道三段式 RVR（TDZ / MID / END）与 ILS $3^\circ$ 下滑道斜程能见度（SVR）**：遵循 ICAO Doc 9365 与 EASA AMC NCO.OP.110，结合有效能见度/RVR 与最低 BKN/OVC 云底高（Ceiling）判定 `CAVOK / VMC / CAT-I / CAT-II / CAT-IIIA~C` 等级；沿 3.6 km 跑道轴线实时采样**接地区（TDZ）、中间段（MID）、停止端（END）三段式 RVR**；计算飞行员沿 **ILS $3^\circ$ 下滑道进近的斜程能见度（SVR）与决断高（DH 200 ft / 100 ft）目视参考建立判据**；支持跑道磁航向**顶风/顺风/正侧风分量分解与超限告警**。
+  - **高原/高高原机场 QNH↔QFE、密度高度（DA）与严寒机场高度表修正**：内置中国民航机场表（WGS-84 坐标与海拔），自动识别一般高原（$\ge 1524\text{ m}$）与高高原机场（$\ge 2438\text{ m}$），实时换算修正海平面气压 QNH、场面气压 QFE、**计入高湿虚温修正的密度高度（Density Altitude，DA）与起飞滑跑距离增量**，并按 **ICAO Doc 8168 (PANS-OPS)** 计算严寒天气下决断高（DH/MDH）的低温气压高度表正修正量。
+  - **飞机积冰（SLD）、颠簸耗散率（EDR）与低空风切变（LLWS）风险评估**：根据过冷水含量（SLWC）、温度效率窗（$0 \sim -38^\circ\text{C}$）与有效滴径 $r_e$ 计算飞机积冰严重度与 SLD 告警；根据对流强度、积雨云含水量与边界层切变输出国际民航标准**湍流涡旋耗散率 $\text{EDR}$（$\text{m}^{2/3}\text{s}^{-1}$）**与进近走廊 **$0\text{–}500\text{ m}$ 低空垂直风切变（$\text{kt/100ft}$）及微下击暴流告警**。
 - **模式前处理与科研数据导出**：支持一键导出标准 METAR、IWXXM XML、BUFR/GRIB JSON、ICON-LES Fortran Namelist（`.nml`）、CLOUDLAB 实验配置（`.yaml`）、57 层完整垂直廓线 CSV（`toProfileCSV`）及三方案微物理响应曲线 CSV（`toSchemeCSV`），并提供命令行批处理与 Python SDK。
 
 ---
@@ -115,7 +115,10 @@ CloudField/
 | WBF 水汽压差 | $\Delta e_{wi}(T) = e_{s,w}(T) - e_{s,i}(T)$ | Murphy & Koop (2005)，在 $-12.5^\circ\text{C}$ 达峰值 $\approx 0.268\text{ hPa}$ |
 | 双流辐射与强迫 | $\alpha_{\text{all}} = R_c + \frac{T_c^2 \alpha_s}{1 - R_c \alpha_s}$，$\text{CRE}_{\text{SW}} = -S_0 \mu_0 (\alpha_{\text{all}} - \alpha_s)$ | 耦合地表反照率 $\alpha_s$ 的短波云辐射效应与 Twomey 强迫 |
 | 场面气压换算 | $\text{QFE} = \text{QNH} \cdot \exp\left(-\frac{g \cdot h_{\text{elev}}}{R_d \cdot \bar{T}}\right)$ | 高原/高高原机场 QNH ↔ QFE 压高互逆换算 |
+| 密度高度 (DA) | $\text{DA}_{\text{ft}} = \text{PA}_{\text{ft}} + 118.8 \cdot (T_v - T_{\text{ISA}})$ | 计入高湿虚温 $T_v$ 修正的高原/高温起飞性能高度 |
 | 低温高度修正 | $\Delta H = H \cdot \frac{15 - T_0}{273.15 + T_0 - 0.5 L_0 (H + H_{\text{elev}})}$ | ICAO Doc 8168 (PANS-OPS) 严寒机场决断高正修正 |
+| 下滑道斜程能见度 | $\text{SVR}(H) = \frac{3.912}{\frac{1}{L_{\text{slant}}} \int_0^{L_{\text{slant}}} \beta(s)\,\mathrm{d}s}$ | ILS $3^\circ$ 下滑道机头至接地区斜向路径积分能见度 |
+| 对流有效位能 | $\text{CAPE} = \int_{z_{\text{LFC}}}^{z_{\text{EL}}} g \frac{T_p(z) - T_{\text{env}}(z)}{T_{\text{env},K}(z)}\,\mathrm{d}z$ | 气块干/湿绝热抬升正浮力垂直积分（$\text{J/kg}$） |
 
 详细推导与参数化说明见 [`docs/methodology.md`](docs/methodology.md)。
 

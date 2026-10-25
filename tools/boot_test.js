@@ -1052,6 +1052,54 @@ ok(tafRes.ok && tafRes.stepsCount >= 4 && tafRes.minVisM < 600 && tafRes.maxVisM
   'Metar.tafToTimeSeries 将含 BECMG/TEMPO 的多时段复杂 TAF 转化为 TimeSeries 时间序列并生成能见度演变曲线',
   `steps=${tafRes.stepsCount}, visRange=${tafRes.minVisM}~${tafRes.maxVisM}m`);
 
+// 14) 教学、科研、地面塔台与机载航电综合能力校验
+Amod.deserialize(snapBefore9);
+Amod.STATE.surfaceTemp = 28; Amod.STATE.surfaceRH = 82; Amod.STATE.lapseRate = 7.4; Amod.STATE.convection = 80;
+const thConv = Amod.parcelThermodynamics();
+ok(thConv.capeJkg > 800 && thConv.lfcKm != null && thConv.elKm > thConv.lfcKm && thConv.liftedIndex < -2 && thConv.parcelPath.length > 30,
+  '热力学探空图解 (parcelThermodynamics) 准确计算气块干/湿绝热抬升轨迹及 LCL / LFC / EL / CAPE / CIN / LI',
+  `LCL=${thConv.lclKm}km, LFC=${thConv.lfcKm}km, EL=${thConv.elKm}km, CAPE=${thConv.capeJkg} J/kg, LI=${thConv.liftedIndex}`);
+
+const bgtInit = Kes.processBudget({ scheme: 'kk2000', qc: 1.8e-3, qr: 0 });
+const bgtMature = Kes.processBudget({ scheme: 'kk2000', qc: 1.8e-3, qr: 6e-4 });
+ok(bgtInit.dominantProcess === 'AUTOCONV' && bgtInit.pacPct > 95 && bgtMature.dominantProcess === 'ACCRETION' && bgtMature.pgrPct > 70,
+  'Kessler.processBudget 准确拆解自动转化 (P_ac)、碰并收集 (P_gr) 与 WBF 冰化源汇收支占比',
+  `初生期 P_ac=${bgtInit.pacPct}%, 成熟期 P_gr=${bgtMature.pgrPct}%`);
+
+Amod.deserialize(snapBefore9);
+Amod.STATE.surfaceTemp = -2; Amod.STATE.windSpeed = 10; Amod.STATE.windDir = 270;
+Amod.STATE.layers.sc.on = true; Amod.STATE.layers.sc.base = 0.5; Amod.STATE.layers.sc.top = 1.5; Amod.STATE.layers.sc.coverage = 0.9; Amod.STATE.layers.sc.density = 0.85;
+const optSeed = win.Physics.optimalSeedingPoint(0, 0, { apply: true });
+const sdTargeted = win.Physics.seedingDiagnostics(0);
+ok(optSeed.x0 < -2.5 && Math.abs(optSeed.z0) < 0.2 && Amod.STATE.seeding.on === true && sdTargeted.gainRatio > 1.2,
+  'Physics.optimalSeedingPoint 根据风速/风向与 WBF 冰化时间尺度自动反演上风向最佳播撒点并瞄准跑道靶区',
+  `seedPt=(${optSeed.x0}, ${optSeed.z0}, ${optSeed.altKm}km), agent=${optSeed.recommendedAgent}, gain=${sdTargeted.gainRatio.toFixed(2)}×`);
+
+const rvr3 = win.Integration.VisConv.runwayThreePointRVR('27L', false, 'HI_approach', 0);
+ok(rvr3.tdzM >= 50 && rvr3.midM >= 50 && rvr3.endM >= 50 && /^R27L\/\d{4}N R27L\/\d{4}N R27L\/\d{4}N$/.test(rvr3.metarGroup),
+  'VisConv.runwayThreePointRVR 沿 3.6 km 跑道采样接地区 (TDZ) / 中间段 (MID) / 停止端 (END) 三段式 RVR 并生成 METAR 报组',
+  rvr3.metarGroup);
+
+const gsProf = win.Physics.approachSlantProfile({ rwyDesignator: '27L' });
+ok(gsProf && isFinite(gsProf.svrAtCat1DhM) && gsProf.profile.length === 7 && typeof gsProf.visualContactAtCat1Dh === 'boolean',
+  'Physics.approachSlantProfile 计算 ILS 3° 下滑道斜程能见度 (SVR) 廓线与决断高 (DH) 目视接触判据',
+  `SVR@DH60m=${gsProf.svrAtCat1DhM}m, ratio=${gsProf.svrRatio}×, contact=${gsProf.visualContactAtCat1Dh}`);
+
+Amod.STATE.convection = 88;
+Amod.STATE.layers.cb.on = true; Amod.STATE.layers.cb.coverage = 0.85; Amod.STATE.layers.cb.density = 0.9;
+Amod.STATE.precipRateMmH = 35;
+const radWxr = win.Operators.radar(0);
+const turbDiag = win.Physics.turbulenceAndShearDiagnostics(0);
+ok(radWxr.wxrColor === 'RED' && radWxr.xBandTwoWayAttenDb > 6 && radWxr.pacShadowAlert === true && radWxr.dBZXBand < radWxr.dBZ && turbDiag.edrMax >= 0.25 && turbDiag.llwsAlert === true,
+  '机载 X 波段气象雷达 (ARINC 708 四色 + PAC 双程雨衰阴影告警) 与湍流耗散率 EDR / 低空风切变 LLWS 联合告警有效',
+  `S-band=${radWxr.dBZ.toFixed(1)}dBZ (${radWxr.wxrColor}), X-band=${radWxr.dBZXBand}dBZ (-${radWxr.xBandTwoWayAttenDb}dB), EDR=${turbDiag.edrMax} (${turbDiag.edrSeverity}), LLWS=${turbDiag.llwsKtPer100Ft}kt/100ft`);
+Amod.STATE.precipRateMmH = 0;
+
+const daHotPlateau = win.Integration.Coord.densityAltitude(1008, 2184, 30, 60); // 西宁夏季高温
+ok(daHotPlateau.densityAltFt > daHotPlateau.elevFt + 2000 && daHotPlateau.highDaWarn === true && daHotPlateau.takeoffRollIncreasePct >= 25,
+  'Coord.densityAltitude 计入高湿虚温修正，准确计算高原高温机场密度高度 (DA) 与起飞滑跑距离增量百分比',
+  `Elev=${daHotPlateau.elevFt}ft → DA=${daHotPlateau.densityAltFt}ft, σ=${daHotPlateau.densityRatioSigma}, roll+${daHotPlateau.takeoffRollIncreasePct}%`);
+
 Amod.deserialize(snapBefore9);
 
 // ================= 汇总 =================
