@@ -41,21 +41,37 @@
     return { kind: 'sounding', counts, rows: out, total: rows.length };
   }
 
-  // 轻量 METAR 解析与质控：识别能见度、温度/露点、风
+  // 轻量 METAR 解析与质控：支持中国民航 MPS 与国际 KT/KMH 风速单位、CAVOK、温度/露点、QNH/Altimeter 合理性检查
   function flagMetar(text) {
     const blocks = (text || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
     const rows = [];
     let counts = { ok: 0, warn: 0, error: 0, missing: 0 };
-    const reVis = /(\d{4})(?=\s|$)/;                 // 能见度 4 位（米），9999=无限
-    const reTd = /(M?\d{2})\/(M?\d{2})/;             // 温度/露点
-    const reWind = /(\d{3}|VRB)(\d{2,3})(?:G(\d{2,3}))?KT/;
+    const reVis = /(?:^|\s)(\d{4})(?:NE|SE|NW|SW|N|E|S|W)?(?=\s|$)/;  // 能见度 4 位（米），9999=≥10km
+    const reCavok = /\b(CAVOK|SKC|CLR)\b/;
+    const reTd = /\b(M?\d{2})\/(M?\d{2})\b/;                          // 温度/露点
+    const reWind = /\b(\d{3}|VRB)(\d{2,3})(?:G(\d{2,3}))?(KT|MPS|KMH)\b/;
+    const reQnh = /\b(?:Q(\d{4})|A(\d{4}))\b/;
     for (let i = 0; i < blocks.length; i++) {
       const b = blocks[i];
       const flags = [];
-      const visM = b.match(reVis);
+      const qnhM = b.match(reQnh);
+      let qnhHpa = null;
+      if (qnhM) {
+        qnhHpa = qnhM[1] ? parseInt(qnhM[1], 10) : Math.round(parseInt(qnhM[2], 10) * 0.01 * 33.8639);
+        if (qnhHpa < 870 || qnhHpa > 1085) flags.push({ level: 'error', msg: 'QNH 气压异常 ' + qnhHpa + ' hPa' });
+      }
+      // 剥离 QNH / 时间组后再匹配 4 位能见度，避免把 Q1013 误当成能见度
+      const bNoQnh = b.replace(/\b[QA]\d{4}\b/g, '').replace(/\b\d{6}Z\b/g, '');
+      const visM = bNoQnh.match(reVis);
       let vis = null;
-      if (visM) { vis = visM[1] === '9999' ? 99999 : parseInt(visM[1], 10); if (vis < LIMITS.vis[0] || vis > LIMITS.vis[1]) flags.push({ level: 'warn', msg: '能见度可疑 ' + vis }); }
-      else flags.push({ level: 'warn', msg: '未解析到能见度' });
+      if (reCavok.test(b)) {
+        vis = 10000;
+      } else if (visM) {
+        vis = visM[1] === '9999' ? 99999 : parseInt(visM[1], 10);
+        if (vis < LIMITS.vis[0] || vis > LIMITS.vis[1]) flags.push({ level: 'warn', msg: '能见度可疑 ' + vis });
+      } else {
+        flags.push({ level: 'warn', msg: '未解析到能见度' });
+      }
       const td = b.match(reTd);
       let T = null, Td = null;
       if (td) {
@@ -64,10 +80,19 @@
         if (Td > T) flags.push({ level: 'error', msg: '露点高于温度' });
       }
       const w = b.match(reWind);
-      const wind = w ? (w[1] === 'VRB' ? 'VRB' : w[1] + '°/' + w[2] + 'kt') : '未解析';
+      let wind = '未解析';
+      if (w) {
+        const spd = parseInt(w[2], 10);
+        const gst = w[3] ? parseInt(w[3], 10) : null;
+        const unit = w[4];
+        wind = (w[1] === 'VRB' ? 'VRB' : w[1] + '°') + '/' + spd + (gst ? 'G' + gst : '') + unit.toLowerCase();
+        if (gst != null && gst <= spd) flags.push({ level: 'warn', msg: '阵风未高于平均风速' });
+      } else {
+        flags.push({ level: 'warn', msg: '未解析到风组' });
+      }
       const level = flags.some(f => f.level === 'error') ? 'error' : (flags.length ? 'warn' : 'ok');
       counts[level]++;
-      rows.push({ index: i, raw: b.slice(0, 60), vis, T, Td, wind, level, flags });
+      rows.push({ index: i, raw: b.slice(0, 60), vis, T, Td, wind, qnh: qnhHpa, level, flags });
     }
     return { kind: 'metar', counts, rows, total: rows.length };
   }

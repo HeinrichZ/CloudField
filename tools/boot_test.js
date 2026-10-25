@@ -969,6 +969,39 @@ ok(stHighCov.coverage > stLowCov.coverage && stHighCov.opticalDepth > stLowCov.o
   '云层覆盖率 coverage 从 0.25 增至 0.85 时，三维/二维云场覆盖率与光学厚度单调递增',
   `cov: ${stLowCov.coverage.toFixed(1)}% → ${stHighCov.coverage.toFixed(1)}%, τ: ${stLowCov.opticalDepth.toFixed(2)} → ${stHighCov.opticalDepth.toFixed(2)}`);
 
+// 12) 民航报文容错解析、低能见度特选报 3D 闭环反演、国内 MPS 质控、跑道放行等级与高原 QFE/QNH 换算校验
+const pComplex = win.Integration.parse('SPECI ZUUU 242330Z 02004MPS 0350 R02L/0400N FG VV002NSC 08/08 A2988 RETS WS R02L BECMG 1200'.replace('VV002NSC', 'VV002 NSC'));
+ok(pComplex.type === 'SPECI' && pComplex.station === 'ZUUU' && pComplex.temperature === 8 && pComplex.qnh === 1012 && pComplex.verticalVisibilityFt === 200,
+  'Metar.parse 容错解析国内 MPS 风速、VV002 垂直能见度、单独 NSC、A2988 英寸汞柱与 RETS/WS 附加组，不丢温露点与 QNH',
+  `T=${pComplex.temperature}, QNH=${pComplex.qnh}, VV=${pComplex.verticalVisibilityFt}ft`);
+
+win.Integration.toScene(pComplex);
+const wvAfterSpeci = win.Physics.worstVisibilityDetailed(0);
+ok(Amod.STATE.layers.sc.on && Amod.STATE.aerosol.on && wvAfterSpeci.vis < 1200,
+  'Metar.toScene 将低能见度大雾报文 (0350 FG VV002) 闭环反演为贴地雾层与气溶胶消光，场景最差能见度显著下降',
+  `vis=${wvAfterSpeci.vis.toFixed(0)} m, activeStation=${win.Integration.state.activeStation}`);
+
+const qcCaac = win.QC.flagMetar('METAR ZBAA 241200Z 18005MPS CAVOK 22/10 Q1015\nMETAR ZSPD 241200Z 09008G14MPS 3500 BR FEW015 19/17 Q1012');
+ok(qcCaac.counts.ok === 2 && qcCaac.counts.warn === 0 && qcCaac.rows[0].vis === 10000 && /mps/.test(qcCaac.rows[0].wind),
+  'QC.flagMetar 完整支持中国民航 MPS 风速与 CAVOK 报文（零误报警告）',
+  JSON.stringify(qcCaac.counts));
+
+const minCat1 = win.Integration.VisConv.classifyMinima(800, 600, 75);
+const minCat2 = win.Integration.VisConv.classifyMinima(400, 350, 35);
+const minCat3b = win.Integration.VisConv.classifyMinima(150, 100, 15);
+ok(minCat1.category === 'CAT-I' && minCat2.category === 'CAT-II' && minCat3b.category === 'CAT-IIIB',
+  'VisConv.classifyMinima 综合能见度/RVR 与云底高 Ceiling 准确判定 CAT-I / CAT-II / CAT-IIIB 运行标准',
+  `${minCat1.category}, ${minCat2.category}, ${minCat3b.category}`);
+
+const apZukd = win.Integration.Coord.setActiveAirport('ZUKD'); // 康定高高原机场 4238m
+const qfeZukd = win.Integration.Coord.qnhToQfe(1013.2, apZukd.elev, 5);
+const qnhBack = win.Integration.Coord.qfeToQnh(qfeZukd, apZukd.elev, 5);
+const metarActive = win.Exporter.toMETAR({ windUnit: 'MPS' });
+ok(qfeZukd > 580 && qfeZukd < 640 && Math.abs(qnhBack - 1013.2) < 0.5 && /^METAR ZUKD /.test(metarActive) && /MPS/.test(metarActive),
+  '高高原机场 (ZUKD 4238m) QNH↔QFE 气压换算互逆自洽，且设为活动场站后 Exporter.toMETAR 自动同步台站与 MPS 单位',
+  `QFE=${qfeZukd} hPa, METAR=${metarActive.slice(0, 36)}`);
+win.Integration.state.activeStation = 'ZCCC';
+
 Amod.deserialize(snapBefore9);
 
 // ================= 汇总 =================

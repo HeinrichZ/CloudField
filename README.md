@@ -83,7 +83,7 @@ CloudField/
 │   ├── report.js           # 自包含 HTML 报告 / 截图标注 / 分享链接（URL 状态编码）
 │   └── help.js             # 参数释义卡片 + 示例场景预设
 ├── tools/
-│   ├── boot_test.js        # 伪 DOM/WebGL 桩完整执行 boot()（206 项断言）
+│   ├── boot_test.js        # 伪 DOM/WebGL 桩完整执行 boot()（211 项断言）
 │   ├── dom_smoke.js        # jsdom 加载真实 index.html 的启动冒烟（54 项断言）
 │   ├── glsl_test.js        # GLSL ES 3.00 语法级解析校验（5 项，含负向对照）
 │   ├── stability_test.js   # 长程渲染循环稳定性 + 功能逐项核对（34 项）
@@ -184,7 +184,7 @@ CloudField/
 
 **回归测试**
 
-- `node tools/boot_test.js`：伪 DOM/WebGL 桩完整执行 `boot()`，覆盖启动、语言/单位切换、天气与机场三语、词典一致性、色标、派生量、口径与着色器精度（206 项断言）。
+- `node tools/boot_test.js`：伪 DOM/WebGL 桩完整执行 `boot()`，覆盖启动、语言/单位切换、天气与机场三语、词典一致性、色标、派生量、口径与着色器精度（211 项断言）。
 - `node tools/dom_smoke.js`：jsdom 加载真实 `index.html`，验证顶栏、Tab、仪表卡、罗盘、高度轴的真实 DOM 接线（54 项断言）。需 `NODE_PATH` 指向含 jsdom 的目录。
 - `node tools/glsl_test.js`：GLSL ES 3.00 语法级解析（含负向对照，5 项）。
 - `node tools/stability_test.js`：长程渲染循环稳定性 + 功能逐项核对（34 项）。在 jsdom 下驱动 **1000 帧**真实渲染主循环，期间随机扰动温度/风/质量/图层/视图/播放态、周期切换语言与单位、刷新 occupancy，验证零异常、循环存活、occupancy 持续上传、FPS 计算、加载层不回弹、GPU 对象不泄漏、堆内存不失控；并执行确定性功能核对（5 种视图模式 / 4 种微物理叠加 / 剖面高度线 / 风场映射 / 快照导出 / 三个弹窗 / 滑块回显 / 视角按钮）。occupancy 计算经内联 Worker 源码在进程内实跑，故密度场被如实计算。需 `NODE_PATH` 指向含 jsdom 的目录。

@@ -22,14 +22,25 @@
     return { vis: w.vis, alt: w.alt, cover, ops, re: info.re != null ? info.re : A.operativeRe(0), lwc: info.lwc || 0 };
   }
 
-  // —— METAR / AVMET 文本（符合 ICAO Annex 3 云量 FEW/SCT/BKN/OVC、百英尺云底高与节风速编码）——
+  function activeStation(opts) {
+    if (opts && opts.station) return opts.station;
+    if (global.Integration && global.Integration.state && global.Integration.state.activeStation) {
+      return global.Integration.state.activeStation;
+    }
+    return 'ZCCC';
+  }
+
+  // —— METAR / AVMET 文本（符合 ICAO Annex 3 云量 FEW/SCT/BKN/OVC、百英尺云底高与节/米秒风速编码）——
   function toMETAR(opts) {
     if (typeof opts === 'string') opts = { station: opts };
     opts = opts || {};
     const r = readouts();
+    const sta = activeStation(opts);
     const vis = isFinite(r.vis) ? Math.min(9999, Math.max(50, Math.round(r.vis / 50) * 50)) : 9999;
     const wdir = pad(Math.round((S.windDir || 0) / 10) * 10, 3);
-    const wspdKt = pad(Math.min(99, Math.round((S.windSpeed || 0) * 1.94384)), 2);
+    const useMPS = opts.windUnit === 'MPS';
+    const wspdNum = useMPS ? Math.min(99, Math.round(S.windSpeed || 0)) : Math.min(99, Math.round((S.windSpeed || 0) * 1.94384));
+    const wspdStr = pad(wspdNum, 2) + (useMPS ? 'MPS' : 'KT');
     const T = Math.round(A.tempAt(0)), Td = Math.round(A.dewAt(0));
     const dd = (Td < 0 ? 'M' + pad(-Td, 2) : pad(Td, 2));
     const TT = (T < 0 ? 'M' + pad(-T, 2) : pad(T, 2));
@@ -44,9 +55,10 @@
       const suffix = L.key === 'cb' ? 'CB' : (L.key === 'cu' && (L.top - L.base) >= 3.0 ? 'TCU' : '');
       cloudGrps.push(covCode + hft + suffix);
     });
+    const wx = vis < 1000 ? 'FG ' : (vis < 5000 ? (S.aerosol && S.aerosol.on && S.surfaceRH < 80 ? 'HZ ' : 'BR ') : '');
     const cldStr = cloudGrps.length ? cloudGrps.join(' ') : 'NSC';
-    return 'METAR ' + (opts.station || 'ZCCC') + ' ' + timeStr + ' ' +
-      wdir + wspdKt + 'KT ' + (vis === 9999 ? '9999' : pad(vis, 4)) + ' ' +
+    return 'METAR ' + sta + ' ' + timeStr + ' ' +
+      wdir + wspdStr + ' ' + (vis === 9999 ? '9999' : pad(vis, 4)) + ' ' + wx +
       cldStr + ' ' + TT + '/' + dd + ' ' +
       'Q' + pad(S.surfacePressure, 4) + ' RMK ' + (opts.remark || ('VIScalc=' + (isFinite(r.vis) ? r.vis.toFixed(0) + 'm' : 'NA') + ' COV=' + r.cover.toFixed(0) + '%'));
   }
@@ -55,11 +67,12 @@
   function toIWXXM(opts) {
     opts = opts || {};
     const r = readouts();
+    const sta = activeStation(opts);
     const isoNow = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
     return '<?xml version="1.0" encoding="UTF-8"?>\n' +
       '<Metar xmlns="http://www.wmo.int/IWXXM" permissibleUsage="OPERATIONAL">\n' +
       '  <observingTime>' + (opts.time || isoNow) + '</observingTime>\n' +
-      '  <station>' + (opts.station || 'ZCCC') + '</station>\n' +
+      '  <station>' + sta + '</station>\n' +
       '  <visibility uom="m">' + (isFinite(r.vis) ? Math.round(r.vis) : 9999) + '</visibility>\n' +
       '  <airTemperature uom="degC">' + A.tempAt(0).toFixed(1) + '</airTemperature>\n' +
       '  <dewpointTemperature uom="degC">' + A.dewAt(0).toFixed(1) + '</dewpointTemperature>\n' +
@@ -70,13 +83,14 @@
   }
 
   // —— BUFR / GRIB 等效字段集 ——
-  function toBUFR() {
+  function toBUFR(opts) {
     const r = readouts();
+    const sta = activeStation(opts);
     return {
       schema: 'BUFR/WMO-equivalent fields (binary encoding requires WMO template)',
-      station: 'ZCCC', category: 0, subtype: 1,
+      station: sta, category: 0, subtype: 1,
       fields: [
-        { f: 'WMOBlockStation', v: 'ZCCC' },
+        { f: 'WMOBlockStation', v: sta },
         { f: 'windDirection', u: 'deg', v: S.windDir },
         { f: 'windSpeed', u: 'm/s', v: S.windSpeed },
         { f: 'visibility', u: 'm', v: isFinite(r.vis) ? Math.round(r.vis) : 9999 },

@@ -28,6 +28,8 @@
     ws: null,                 // WebSocket 实例
     wsUrl: 'ws://127.0.0.1:8787',
     connected: false,
+    activeStation: 'ZBAA',    // 当前选定运行场站 ICAO
+    activeAirport: null,      // 当前选定机场元数据
     lastSnapshot: null,       // 最近一次全量快照（用于 initBridge 密钥协商的影子）
     recorder: {               // 事件录制器
       active: false,
@@ -170,42 +172,73 @@
         out.weather.push({ intensity, codes, desc: weatherDesc(codes) });
         i++;
       }
-      // 垂直能见度 VVxxx
-      if (tokens[i] && /^VV(\d{3})$/.test(tokens[i])) { out.verticalVisibilityFt = parseInt(tokens[i].slice(2), 10) * 100; i++; }
-      // 云组
-      const cloudRe = /^(NSC|NCD|SKC|CLR|FEW|SCT|BKN|OVC)(\d{3})(CB|TCU|CI|CS|CC|AC|AS|NS|SC|CU|ST)?$/;
-      while (tokens[i] && cloudRe.test(tokens[i])) {
+      // 垂直能见度 VVxxx 或 VV///
+      if (tokens[i] && /^VV(\d{3}|\/\/\/)$/.test(tokens[i])) {
+        if (tokens[i] !== 'VV///') out.verticalVisibilityFt = parseInt(tokens[i].slice(2), 10) * 100;
+        i++;
+      }
+      // 云组（支持单独的 NSC/NCD/SKC/CLR 或带 3 位高度的 FEW/SCT/BKN/OVC 及自动站 ///）
+      const cloudClearRe = /^(NSC|NCD|SKC|CLR)$/;
+      const cloudRe = /^(FEW|SCT|BKN|OVC|NSC|NCD|SKC|CLR)(\d{3}|\/\/\/)(CB|TCU|CI|CS|CC|AC|AS|NS|SC|CU|ST|\/\/\/)?$/;
+      while (tokens[i] && (cloudClearRe.test(tokens[i]) || cloudRe.test(tokens[i]) || /^\/{3,6}$/.test(tokens[i]))) {
+        if (cloudClearRe.test(tokens[i])) {
+          const amt0 = tokens[i];
+          out.clouds.push({ amount: amt0, okta: 0, coverage: 0, heightFt: 0, heightM: 0, type: null, layer: 'sc' });
+          i++;
+          continue;
+        }
+        if (/^\/{3,6}$/.test(tokens[i])) { i++; continue; }
         const cm = tokens[i].match(cloudRe);
-        const amt = cm[1], hFt = parseInt(cm[2], 10) * 100;
+        const amt = cm[1], hFt = cm[2] === '///' ? 1000 : parseInt(cm[2], 10) * 100;
+        const cType = (cm[3] && cm[3] !== '///') ? cm[3] : null;
         out.clouds.push({
           amount: amt, okta: (CLOUD_AMOUNT[amt] || { okta: 0 }).okta,
           coverage: (CLOUD_AMOUNT[amt] || { cov: 0 }).cov,
           heightFt: hFt, heightM: Math.round(hFt * 0.3048),
-          type: cm[3] || null, layer: cm[3] ? (CLOUD_TYPE_TO_LAYER[cm[3]] || 'sc') : 'sc',
+          type: cType, layer: cType ? (CLOUD_TYPE_TO_LAYER[cType] || 'sc') : (hFt >= 20000 ? 'ci' : hFt >= 7000 ? 'cs' : 'sc'),
         });
         i++;
       }
-      // 温度/露点
-      if (tokens[i] && /^(M?\d{2})\/(M?\d{2})$/.test(tokens[i])) {
-        const tm2 = tokens[i].split('/');
-        out.temperature = signed(tm2[0]); out.dewpoint = signed(tm2[1]);
-        out.relativeHumidity = dewpointToRH(out.temperature, out.dewpoint);
-        out.fogCondition = (out.temperature - out.dewpoint) <= 2;
+      // 跳过云组与温露点之间可能出现的非标准占位，寻找温度/露点与 QNH/Altimeter
+      while (i < tokens.length) {
+        const tk = tokens[i];
+        if (/^(BECMG|TEMPO|NOSIG|RMK)$/.test(tk)) {
+          out.trend = tokens.slice(i).join(' ');
+          break;
+        }
+        if (out.temperature == null && /^(M?\d{2})\/(M?\d{2}|\/\/)$/.test(tk)) {
+          const tm2 = tk.split('/');
+          out.temperature = signed(tm2[0]);
+          out.dewpoint = tm2[1] === '//' ? (out.temperature - 2) : signed(tm2[1]);
+          out.relativeHumidity = dewpointToRH(out.temperature, out.dewpoint);
+          out.fogCondition = (out.temperature - out.dewpoint) <= 2;
+          i++;
+          continue;
+        }
+        if (out.qnh == null && /^Q(\d{4})$/.test(tk)) {
+          out.qnh = parseInt(tk.slice(1), 10);
+          i++;
+          continue;
+        }
+        if (out.qnh == null && /^A(\d{4})$/.test(tk)) {
+          out.qnh = Math.round(parseInt(tk.slice(1), 10) * 0.01 * 33.8639);
+          i++;
+          continue;
+        }
         i++;
-      }
-      // 气压 QNH
-      if (tokens[i] && /^Q(\d{4})$/.test(tokens[i])) { out.qnh = parseInt(tokens[i].slice(1), 10); i++; }
-      // TREND（BECMG/TEMPO/NOSIG 到报文结束或 TX/TN）
-      if (tokens[i] && /^(BECMG|TEMPO|NOSIG)/.test(tokens[i])) {
-        out.trend = tokens.slice(i).join(' ');
       }
       return out;
     }
 
-    // 将解析结果映射到 CloudField 的 Atmosphere.STATE（尽量映射；并记录无法映射项）
+    // 将解析结果映射到 CloudField 的 Atmosphere.STATE（含低能见度/天气现象/垂直能见度对 3D 云雾与气溶胶消光场的闭环反演）
     function toScene(report) {
       const S = A.STATE;
       const notes = [], applied = [];
+      if (report.station && /^[A-Z]{4}$/.test(report.station)) {
+        state.activeStation = report.station;
+        const ap = Coord.byICAO ? Coord.byICAO(report.station) : null;
+        if (ap) state.activeAirport = ap;
+      }
       // 风
       if (report.wind && report.wind.direction !== 'VRB') { S.windDir = report.wind.direction; applied.push(I18N.t('out.windDir') + ' ' + report.wind.direction + '°'); }
       if (report.wind) { S.windSpeed = +report.wind.speedMPS.toFixed(1); applied.push(I18N.t('out.windSpeed') + ' ' + S.windSpeed.toFixed(1) + ' m/s'); }
@@ -214,24 +247,73 @@
       // 温/湿
       if (report.temperature != null) { S.surfaceTemp = report.temperature; applied.push(I18N.t('out.surfaceTemp') + ' ' + report.temperature + '°C'); }
       if (report.relativeHumidity != null) { S.surfaceRH = Math.round(report.relativeHumidity); applied.push(I18N.t('out.rh') + ' ' + S.surfaceRH + '%'); }
+
+      const allCodes = [];
+      (report.weather || []).forEach(w => (w.codes || []).forEach(c => allCodes.push(c)));
+      const hasFog = allCodes.indexOf('FG') >= 0 || report.fogCondition || (report.visibility != null && report.visibility < 1000);
+      const hasMistHaze = allCodes.some(c => ['BR', 'HZ', 'FU', 'DU', 'SA', 'VA'].indexOf(c) >= 0) || (report.visibility != null && report.visibility >= 1000 && report.visibility < 6000);
+      const hasTS = allCodes.indexOf('TS') >= 0;
+      const hasFreezing = allCodes.indexOf('FZ') >= 0 || (report.temperature != null && report.temperature < 0);
+
       // 云组 → 5 个固定层
-      if (!report.cavok && report.clouds.length) {
+      const validClouds = (report.clouds || []).filter(c => c.coverage > 0);
+      if (!report.cavok && validClouds.length) {
         const reset = ['ci', 'cs', 'sc', 'cu', 'cb'];
         reset.forEach(k => { S.layers[k].on = false; });
-        report.clouds.forEach(c => {
+        validClouds.forEach(c => {
           const L = S.layers[c.layer];
           L.on = true;
           const baseKm = Math.max(0.05, c.heightM / 1000);
           L.base = +baseKm.toFixed(2);
-          // 厚度按云型估算
           const thick = c.type === 'CB' ? 6 : c.type === 'TCU' ? 3 : c.type === 'CI' || c.type === 'CS' ? 3 : 1.2;
           L.top = +(baseKm + thick).toFixed(2);
           L.coverage = c.coverage;
+          L.density = Math.max(0.55, c.coverage * 0.85);
           applied.push(`${c.amount} ${c.type || ''} ${I18N.t('out.cloudBase')} ${(baseKm).toFixed(2)}km`);
         });
       } else if (report.cavok) {
+        ['sc', 'cu', 'cb'].forEach(k => { S.layers[k].on = false; });
+        if (S.aerosol) { S.aerosol.on = false; S.aerosol.beta0 = 5e-5; }
         applied.push(I18N.t('out.cavok'));
       }
+
+      // 当报文无显式云组（如 NSC/SKC 或垂直能见度 VVxxx）但报出低能见度/雾霾时，按 Koschmieder 定律反演贴地雾层或气溶胶消光
+      const effVis = report.visibilityMin != null ? Math.min(report.visibility || 9999, report.visibilityMin) : report.visibility;
+      if (!report.cavok && !validClouds.length && effVis != null && effVis < 6000) {
+        const targetBeta = 3.912 / Math.max(50, effVis); // m⁻¹
+        if (hasFog || effVis <= 1000 || report.verticalVisibilityFt != null) {
+          const sc = S.layers.sc;
+          sc.on = true;
+          sc.base = 0.05;
+          const vvKm = report.verticalVisibilityFt ? Math.max(0.20, (report.verticalVisibilityFt * 0.3048) / 1000 + 0.15) : 0.45;
+          sc.top = Math.max(sc.base + 0.25, +vvKm.toFixed(2));
+          sc.coverage = effVis < 500 ? 0.96 : 0.88;
+          sc.density = effVis < 500 ? 0.92 : 0.78;
+          if (S.aerosol) {
+            S.aerosol.on = true;
+            S.aerosol.beta0 = Math.min(0.015, targetBeta * 0.35);
+            S.aerosol.scaleH = 0.8;
+          }
+          applied.push(`VIS ${effVis}m → 贴地雾层 sc (0.05–${sc.top}km) + β=${targetBeta.toFixed(4)}m⁻¹`);
+        } else if (hasMistHaze) {
+          if (S.aerosol) {
+            S.aerosol.on = true;
+            S.aerosol.beta0 = Math.min(0.01, targetBeta * 0.85);
+            S.aerosol.scaleH = 1.4;
+          }
+          applied.push(`VIS ${effVis}m → 边界层气溶胶消光 β₀=${(targetBeta * 0.85).toFixed(4)}m⁻¹`);
+        }
+      }
+      if (hasTS) {
+        S.convection = Math.max(S.convection, 82);
+        if (!S.layers.cb.on) {
+          S.layers.cb.on = true; S.layers.cb.base = 0.8; S.layers.cb.top = 9.5; S.layers.cb.coverage = 0.75; S.layers.cb.density = 0.88;
+        }
+      }
+      if (hasFreezing && S.micro) {
+        S.micro.autoPhaseTemp = true;
+      }
+
       // 天气提示
       if (report.weather.length) notes.push(I18N.t('out.weather') + report.weather.map(w => w.intensity + w.desc).join(I18N.t('out.sep')));
       if (report.fogCondition) notes.push(I18N.t('out.fog'));
@@ -297,14 +379,41 @@
     }
     // 运行类别预设
     const PRESETS = {
-      CAVOK: { vis: 10000, labelKey: 'vis.preset.cavok' },
-      'CAT-I': { vis: 800, rvr: 550, labelKey: 'vis.preset.cat1' },
-      'CAT-II': { vis: 400, rvr: 300, labelKey: 'vis.preset.cat2' },
-      'CAT-IIIA': { vis: 250, rvr: 175, labelKey: 'vis.preset.cat3a' },
-      'CAT-IIIB': { vis: 100, rvr: 50, labelKey: 'vis.preset.cat3b' },
-      'CAT-IIIC': { vis: 0, rvr: 0, labelKey: 'vis.preset.cat3c' },
+      CAVOK: { vis: 10000, rvr: 2000, ceilingM: 1500, labelKey: 'vis.preset.cavok' },
+      'CAT-I': { vis: 800, rvr: 550, ceilingM: 60, labelKey: 'vis.preset.cat1' },
+      'CAT-II': { vis: 400, rvr: 300, ceilingM: 30, labelKey: 'vis.preset.cat2' },
+      'CAT-IIIA': { vis: 250, rvr: 175, ceilingM: 15, labelKey: 'vis.preset.cat3a' },
+      'CAT-IIIB': { vis: 100, rvr: 50, ceilingM: 0, labelKey: 'vis.preset.cat3b' },
+      'CAT-IIIC': { vis: 0, rvr: 0, ceilingM: 0, labelKey: 'vis.preset.cat3c' },
     };
-    return { K_TABLE, calcCMV, rvrToVis, forbiddenCases, PRESETS, kOf };
+    // 根据有效能见度/RVR 与最低云底高（Ceiling，BKN/OVC 距跑道 AGL 米数）判定 ICAO 跑道精密进近运行最低标准等级
+    function classifyMinima(visM, rvrM, ceilingM) {
+      const v = isFinite(visM) ? visM : 10000;
+      const effRvr = isFinite(rvrM) ? rvrM : v;
+      const ceil = isFinite(ceilingM) ? ceilingM : 9999;
+      if (v >= 9999 && ceil >= 1500) return { category: 'CAVOK', okCat1: true, effRvr, ceilingM: ceil };
+      if (v >= 5000 && ceil >= 450) return { category: 'VMC', okCat1: true, effRvr, ceilingM: ceil };
+      if (effRvr >= 550 && ceil >= 60) return { category: 'CAT-I', okCat1: true, effRvr, ceilingM: ceil };
+      if (effRvr >= 300 && ceil >= 30) return { category: 'CAT-II', okCat1: false, effRvr, ceilingM: ceil };
+      if (effRvr >= 175) return { category: 'CAT-IIIA', okCat1: false, effRvr, ceilingM: ceil };
+      if (effRvr >= 50) return { category: 'CAT-IIIB', okCat1: false, effRvr, ceilingM: ceil };
+      return { category: 'CAT-IIIC', okCat1: false, effRvr, ceilingM: ceil };
+    }
+    // 读取当前三维场景的最差能见度与最低 BKN/OVC 云底高（米）
+    function currentSceneMinima() {
+      const wv = (global.Physics && global.Physics.worstVisibilityDetailed)
+        ? global.Physics.worstVisibilityDetailed(0)
+        : A.worstVisibility(A.effectiveLayers(), { x: A.STATE.windSpeed, dir: A.STATE.windDir }, 0);
+      const visM = isFinite(wv.vis) ? Math.round(wv.vis) : 10000;
+      let ceilingKm = Infinity;
+      A.effectiveLayers().forEach(L => {
+        if (L.coverage >= 0.50 && L.density >= 0.05) ceilingKm = Math.min(ceilingKm, L.base);
+      });
+      const ceilingM = isFinite(ceilingKm) ? Math.round(ceilingKm * 1000) : 9999;
+      const cls = classifyMinima(visM, visM, ceilingM);
+      return { visM, ceilingM, category: cls.category, okCat1: cls.okCat1 };
+    }
+    return { K_TABLE, calcCMV, rvrToVis, forbiddenCases, PRESETS, kOf, classifyMinima, currentSceneMinima };
   })();
 
   // =====================================================================
@@ -440,6 +549,26 @@
     // 大地高 → 海拔（米）；此处以椭球高近似，提供 EGM96 偏移接口占位
     function geoidOffset(lat, lon) { return 0; } // 简化：默认 0，可由 Bridge 提供 EGM96 网格
     function elevationM(airport) { return airport.elev + geoidOffset(airport.lat, airport.lon); }
+    // 标准大气压高换算：修正海平面气压 QNH (hPa) ↔ 机场场面气压 QFE (hPa)，支持高原/高高原机场运行核算
+    function qnhToQfe(qnhHpa, elevM, tempC) {
+      const qnh = isFinite(qnhHpa) ? qnhHpa : 1013.25;
+      const h = Math.max(0, elevM || 0);
+      const T0 = (isFinite(tempC) ? tempC : 15) + 273.15 + 0.0065 * h * 0.5;
+      return +(qnh * Math.exp((-9.80665 * h) / (287.05 * T0))).toFixed(1);
+    }
+    function qfeToQnh(qfeHpa, elevM, tempC) {
+      const qfe = isFinite(qfeHpa) ? qfeHpa : 1013.25;
+      const h = Math.max(0, elevM || 0);
+      const T0 = (isFinite(tempC) ? tempC : 15) + 273.15 + 0.0065 * h * 0.5;
+      return +(qfe * Math.exp((9.80665 * h) / (287.05 * T0))).toFixed(1);
+    }
+    function setActiveAirport(icaoOrObj) {
+      const ap = typeof icaoOrObj === 'string' ? byICAO(icaoOrObj) : icaoOrObj;
+      if (!ap) return null;
+      state.activeStation = ap.icao;
+      state.activeAirport = ap;
+      return ap;
+    }
     // 米 ↔ 百英尺
     function mToHundredFt(m) { return m / 30.48; }
     function hundredFtToM(hf) { return hf * 30.48; }
@@ -458,7 +587,7 @@
     function byICAO(icao) { return state.airportTable.find(a => a.icao === icao) || null; }
     function loadAirportTable(arr) { if (Array.isArray(arr)) state.airportTable = arr; }
 
-    return { TABLE, elevationM, mToHundredFt, hundredFtToM, search, byICAO, loadAirportTable, geoidOffset, airportName };
+    return { TABLE, elevationM, qnhToQfe, qfeToQnh, setActiveAirport, mToHundredFt, hundredFtToM, search, byICAO, loadAirportTable, geoidOffset, airportName };
   })();
 
   // =====================================================================
@@ -690,10 +819,15 @@
         <button class="act" data-p="CAT-IIIB">CAT-IIIB</button>
         <button class="act" data-p="CAT-IIIC">CAT-IIIC</button>
       </div>
+      <div class="btn-row wrap" id="vis-scene-sync" style="margin-top:4px">
+        <button class="act" id="vis-pull-scene">📥 读取当前场景能见度与云高</button>
+        <button class="act" id="vis-push-scene">📤 将当前数值应用到 3D 场景</button>
+      </div>
       <pre id="vis-out" class="int-out"></pre>`;
     const area = el.querySelector('#vis-area');
     const out = el.querySelector('#vis-out');
     let mode = 'VIS';
+    let curVis = 800, curRvr = 900;
     const draw = () => {
       if (mode === 'VIS') area.innerHTML = visVisTpl();
       else if (mode === 'RVR') area.innerHTML = visRvrTpl();
@@ -701,8 +835,8 @@
       bind();
     };
     const visVisTpl = () => `
-      <div class="ctrl"><div class="row"><label>${I18N.t('vis.label.visMain')}</label><span class="val" id="v-vis">800</span></div>
-        <input type="range" id="i-vis" min="0" max="9999" step="50" value="800"></div>
+      <div class="ctrl"><div class="row"><label>${I18N.t('vis.label.visMain')}</label><span class="val" id="v-vis">${curVis}</span></div>
+        <input type="range" id="i-vis" min="0" max="9999" step="50" value="${curVis}"></div>
       <div class="ctrl"><div class="row"><label>${I18N.t('vis.label.visMin')}</label><span class="val" id="v-vmin">2000</span></div>
         <input type="range" id="i-vmin" min="0" max="9999" step="50" value="2000"></div>
       <div class="ctrl"><div class="row"><label>${I18N.t('vis.label.visMinDir')}</label></div>
@@ -710,42 +844,72 @@
     const visRvrTpl = () => `
       <div class="ctrl"><div class="row"><label>${I18N.t('vis.label.rwy')}</label></div>
         <input type="text" id="i-rwy" value="27L" style="width:80px"></div>
-      <div class="ctrl"><div class="row"><label>RVR (m)</label><span class="val" id="v-rvr">900</span></div>
-        <input type="range" id="i-rvr" min="0" max="2000" step="25" value="900"></div>
+      <div class="ctrl"><div class="row"><label>RVR (m)</label><span class="val" id="v-rvr">${curRvr}</span></div>
+        <input type="range" id="i-rvr" min="0" max="2000" step="25" value="${curRvr}"></div>
       <div class="ctrl"><div class="row"><label>${I18N.t('vis.label.trend')}</label></div>
         <select id="i-rtrend"><option value="U">${I18N.t('vis.opt.up')}</option><option value="D">${I18N.t('vis.opt.down')}</option><option value="N" selected>${I18N.t('vis.opt.flat')}</option></select></div>
       <div class="ctrl"><div class="row"><label>${I18N.t('vis.label.ind')}</label></div>
         <select id="i-rind"><option value="exact">${I18N.t('vis.opt.exact')}</option><option value="greater_than">${I18N.t('vis.opt.gt')}</option><option value="less_than">${I18N.t('vis.opt.lt')}</option></select></div>`;
     const visCmvTpl = () => `
-      <div class="ctrl"><div class="row"><label>${I18N.t('vis.label.cvis')}</label><span class="val" id="v-cvis">800</span></div>
-        <input type="range" id="i-cvis" min="0" max="9999" step="50" value="800"></div>
+      <div class="ctrl"><div class="row"><label>${I18N.t('vis.label.cvis')}</label><span class="val" id="v-cvis">${curVis}</span></div>
+        <input type="range" id="i-cvis" min="0" max="9999" step="50" value="${curVis}"></div>
       <div class="ctrl"><div class="row"><label>${I18N.t('vis.label.daynight')}</label></div>
         <select id="i-cnight"><option value="0">${I18N.t('vis.opt.day')}</option><option value="1" selected>${I18N.t('vis.opt.night')}</option></select></div>
       <div class="ctrl"><div class="row"><label>${I18N.t('vis.label.light')}</label></div>
         <select id="i-clight"><option value="HI_approach">${I18N.t('vis.opt.hi')}</option><option value="other_lights">${I18N.t('vis.opt.other')}</option><option value="no_lights">${I18N.t('vis.opt.nolight')}</option></select></div>
       <div id="cmv-result" class="formula"></div>
       <div id="cmv-forbid" class="warn"></div>`;
+    let fHasRvr = false, fTakeoff = false, fMinUnder800 = false;
     const bind = () => {
       if (mode === 'VIS') {
         const i = area.querySelector('#i-vis'), v = area.querySelector('#v-vis');
-        i.oninput = () => { v.textContent = i.value; out.textContent = `${I18N.t('vis.calcVis')} ${i.value} m\nβ = 3.912/${i.value} = ${(3912 / i.value).toFixed(4)} m⁻¹`; };
+        i.oninput = () => {
+          curVis = +i.value;
+          v.textContent = curVis;
+          const beta = 3.912 / Math.max(25, curVis);
+          const scMin = VisConv.currentSceneMinima();
+          const cls = VisConv.classifyMinima(curVis, curVis, scMin.ceilingM);
+          out.textContent = `${I18N.t('vis.calcVis')} ${curVis} m\nβ = 3.912/${Math.max(25, curVis)} = ${beta.toFixed(4)} m⁻¹\n当前云底高 Ceiling=${scMin.ceilingM >= 9999 ? 'NSC' : scMin.ceilingM + 'm'} → 运行等级判定: ${cls.category}`;
+        };
         i.oninput();
       } else if (mode === 'RVR') {
         const i = area.querySelector('#i-rvr'), v = area.querySelector('#v-rvr');
-        i.oninput = () => { v.textContent = i.value; out.textContent = `RVR ${i.value} m${I18N.t('vis.calcRvrRunway')}${area.querySelector('#i-rwy').value}）\n${I18N.t('vis.calcRvr')}${VisConv.rvrToVis(+i.value, false, 'HI_approach')} m`; };
+        i.oninput = () => {
+          curRvr = +i.value;
+          v.textContent = curRvr;
+          const eqVis = VisConv.rvrToVis(curRvr, false, 'HI_approach');
+          curVis = eqVis || curRvr;
+          const scMin = VisConv.currentSceneMinima();
+          const cls = VisConv.classifyMinima(curVis, curRvr, scMin.ceilingM);
+          out.textContent = `RVR ${curRvr} m${I18N.t('vis.calcRvrRunway')}${area.querySelector('#i-rwy').value}）\n${I18N.t('vis.calcRvr')}${eqVis} m → 运行等级判定: ${cls.category}`;
+        };
         area.querySelector('#i-rwy').oninput = area.querySelector('#i-rvr').oninput;
         i.oninput();
       } else {
         const upd = () => {
-          const vis = +area.querySelector('#i-cvis').value;
-          area.querySelector('#v-cvis').textContent = vis;
+          curVis = +area.querySelector('#i-cvis').value;
+          area.querySelector('#v-cvis').textContent = curVis;
           const isNight = area.querySelector('#i-cnight').value === '1';
           const lt = area.querySelector('#i-clight').value;
-          const r = VisConv.calcCMV(vis, isNight, lt);
-          area.querySelector('#cmv-result').textContent = r.value == null ? I18N.t('vis.cmvNa') : `CMV = ${vis} × ${r.k} = ${r.value} m`;
-          const f = VisConv.forbiddenCases(true, false, null);
-          area.querySelector('#cmv-forbid').innerHTML = I18N.t('vis.forbidTitle') + '<br>' + f.map(x => `□ ${x.label}`).join('<br>');
-          out.textContent = `CMV = ${vis} × K(${lt},${isNight ? I18N.t('vis.nightShort') : I18N.t('vis.dayShort')}) = ${r.value}\n${I18N.t('vis.validPrefix')}${r.valid}${r.reason ? ' — ' + r.reason : ''}`;
+          const r = VisConv.calcCMV(curVis, isNight, lt);
+          const f = VisConv.forbiddenCases(fHasRvr, fTakeoff, fMinUnder800 ? 600 : 800);
+          const anyForbid = f.some(x => x.hit);
+          area.querySelector('#cmv-result').textContent = r.value == null ? I18N.t('vis.cmvNa') : `CMV = ${curVis} × ${r.k} = ${r.value} m`;
+          const fbEl = area.querySelector('#cmv-forbid');
+          fbEl.innerHTML = I18N.t('vis.forbidTitle') + '<br>' + f.map((x, idx) =>
+            `<label style="display:block;cursor:pointer"><input type="checkbox" data-fidx="${idx}" ${x.hit ? 'checked' : ''}> ${x.label}</label>`
+          ).join('');
+          fbEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.onchange = () => {
+              const k = +cb.dataset.fidx;
+              if (k === 0) fHasRvr = cb.checked;
+              else if (k === 1) fTakeoff = cb.checked;
+              else if (k === 2) fMinUnder800 = cb.checked;
+              upd();
+            };
+          });
+          const legal = r.valid && !anyForbid;
+          out.textContent = `CMV = ${curVis} × K(${lt},${isNight ? I18N.t('vis.nightShort') : I18N.t('vis.dayShort')}) = ${r.value}\n${I18N.t('vis.validPrefix')}${legal}${!r.valid && r.reason ? ' — ' + r.reason : ''}${anyForbid ? ' — 命中 CMV 禁用条款' : ''}`;
         };
         area.querySelector('#i-cvis').oninput = upd;
         area.querySelector('#i-cnight').onchange = upd;
@@ -758,8 +922,43 @@
     });
     el.querySelectorAll('#vis-preset button').forEach(b => b.onclick = () => {
       const p = VisConv.PRESETS[b.dataset.p];
-      out.textContent = I18N.t(p.labelKey) + (p.rvr != null ? `\n${I18N.t('vis.rvrStandard')} ${p.rvr} m` : '');
+      if (!p) return;
+      curVis = Math.min(9999, p.vis != null ? p.vis : 800);
+      curRvr = p.rvr != null ? p.rvr : Math.min(2000, curVis);
+      draw();
+      out.textContent = I18N.t(p.labelKey) + (p.rvr != null ? `\n${I18N.t('vis.rvrStandard')} ${p.rvr} m` : '') + `\n(已同步滑块 VIS=${curVis}m, RVR=${curRvr}m)`;
     });
+    el.querySelector('#vis-pull-scene').onclick = () => {
+      const scMin = VisConv.currentSceneMinima();
+      curVis = Math.min(9999, scMin.visM);
+      curRvr = Math.min(2000, scMin.visM);
+      draw();
+      out.textContent = `当前 3D 场景最差能见度: ${scMin.visM} m | 最低云底高 (BKN/OVC): ${scMin.ceilingM >= 9999 ? '无低云遮蔽' : scMin.ceilingM + ' m'}\n→ 跑道进近运行标准判定: ${scMin.category} (${scMin.okCat1 ? '满足 CAT-I 起降标准' : '低于 CAT-I 标准'})`;
+    };
+    el.querySelector('#vis-push-scene').onclick = () => {
+      const targetV = Math.max(50, mode === 'RVR' ? (VisConv.rvrToVis(curRvr, false, 'HI_approach') || curRvr) : curVis);
+      const S = A.STATE;
+      if (targetV >= 9000) {
+        ['sc', 'cu', 'cb'].forEach(k => { S.layers[k].on = false; });
+        if (S.aerosol) { S.aerosol.on = false; S.aerosol.beta0 = 5e-5; }
+      } else {
+        const betaReq = 3.912 / targetV;
+        if (targetV <= 1200) {
+          S.layers.sc.on = true; S.layers.sc.base = 0.05; S.layers.sc.top = 0.45;
+          S.layers.sc.coverage = targetV < 400 ? 0.96 : 0.88;
+          S.layers.sc.density = targetV < 400 ? 0.92 : 0.75;
+          S.sliceAlt = 0.15;
+        }
+        if (S.aerosol) {
+          S.aerosol.on = true;
+          S.aerosol.beta0 = Math.min(0.02, betaReq * (targetV <= 1200 ? 0.45 : 0.9));
+          S.aerosol.scaleH = 1.0;
+        }
+      }
+      if (global.GUI && global.GUI.build) global.GUI.build();
+      if (global.__cf && global.__cf.onChange) global.__cf.onChange();
+      out.textContent = `已按目标能见度 ${targetV} m 同步三维场景云雾与气溶胶消光 (β ≈ ${(3.912 / targetV).toFixed(4)} m⁻¹)`;
+    };
     draw();
   }
 
@@ -768,23 +967,41 @@
       <p class="int-note">${I18N.t('airport.note')}</p>
       <div class="btn-row"><input type="text" id="ap-q" placeholder="${I18N.t('airport.placeholder')}" style="flex:1">
         <button class="act" id="ap-search">${I18N.t('airport.search')}</button></div>
-      <div id="ap-out" class="int-out" style="max-height:240px;overflow:auto"></div>
+      <div id="ap-detail-box" style="margin-bottom:6px"></div>
+      <div id="ap-out" class="int-out" style="max-height:220px;overflow:auto"></div>
       <div class="formula">${I18N.t('airport.formula')}</div>`;
+    const detailBox = el.querySelector('#ap-detail-box');
     const out = el.querySelector('#ap-out');
+    const showDetail = (a) => {
+      if (!a) return;
+      const qnh = A.STATE.surfacePressure || 1013;
+      const qfe = Coord.qnhToQfe(qnh, a.elev, A.STATE.surfaceTemp);
+      const isPlateau = a.elev >= 2438 ? '高高原机场 (≥8000ft)' : (a.elev >= 1524 ? '一般高原机场 (≥5000ft)' : '平原/丘陵机场');
+      detailBox.innerHTML = `<div class="ap-detail" style="padding:6px 8px;border:1px solid #2b3f66;border-radius:4px;background:rgba(16,26,46,0.65)">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h4 style="margin:0">${a.icao} / ${a.iata} — ${Coord.airportName(a)} <small style="color:#ffd166">[${isPlateau}]</small></h4>
+          <button class="act" id="ap-set-active">✓ 设为当前运行场站 (${state.activeStation === a.icao ? '当前' : a.icao})</button>
+        </div>
+        <div>${I18N.t('airport.wgsLat')}：${a.lat.toFixed(4)}° · ${I18N.t('airport.wgsLon')}：${a.lon.toFixed(4)}°</div>
+        <div>${I18N.t('airport.elev')}：${a.elev} m = ${Coord.mToHundredFt(a.elev).toFixed(1)}×100ft (${Math.round(a.elev / 0.3048)} ft)</div>
+        <div>气压换算：当前 QNH=${qnh} hPa → 场面气压 <b>QFE=${qfe} hPa</b> (压差 ${(qnh - qfe).toFixed(1)} hPa)</div>
+      </div>`;
+      const btnSet = detailBox.querySelector('#ap-set-active');
+      if (btnSet) {
+        btnSet.onclick = () => {
+          Coord.setActiveAirport(a);
+          showDetail(a);
+        };
+      }
+    };
     const render = (list) => {
       out.innerHTML = list.length ? list.map(a =>
-        `<div class="ap-row" data-icao="${a.icao}" style="cursor:pointer;padding:4px 6px;border-bottom:1px solid #eee">
+        `<div class="ap-row" data-icao="${a.icao}" style="cursor:pointer;padding:4px 6px;border-bottom:1px solid rgba(255,255,255,0.08)">
           <b>${a.icao}</b> / ${a.iata} — ${Coord.airportName(a)}　(${a.lat.toFixed(2)}, ${a.lon.toFixed(2)})　${I18N.t('airport.altInline')} ${a.elev}m / ${Coord.mToHundredFt(a.elev).toFixed(1)}×100ft</div>`).join('')
         : I18N.t('airport.notFound');
       out.querySelectorAll('.ap-row').forEach(r => r.onclick = () => {
         const a = Coord.byICAO(r.dataset.icao);
-        out.innerHTML = `<div class="ap-detail">
-          <h4>${a.icao} / ${a.iata} — ${Coord.airportName(a)}</h4>
-          <div>${I18N.t('airport.wgsLat')}：${a.lat.toFixed(4)}°</div>
-          <div>${I18N.t('airport.wgsLon')}：${a.lon.toFixed(4)}°</div>
-          <div>${I18N.t('airport.elev')}：${a.elev} m = ${Coord.mToHundredFt(a.elev).toFixed(1)}×100ft</div>
-          <div>${I18N.t('airport.geoid')}：${Coord.elevationM(a)} m</div>
-        </div>` + out.innerHTML;
+        showDetail(a);
       });
     };
     el.querySelector('#ap-search').onclick = () => render(Coord.search(el.querySelector('#ap-q').value));
