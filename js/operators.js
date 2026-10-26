@@ -256,6 +256,9 @@
     if (global.Physics && global.Physics.cruiseContrailAssessment) {
       out.contrail = global.Physics.cruiseContrailAssessment(10.5, time);
     }
+    if (global.Physics && global.Physics.twilightOpticsAndGlare) {
+      out.twilight = global.Physics.twilightOpticsAndGlare();
+    }
     if (all && global.Physics) {
       if (global.Physics.icingDiagnostics) out.icing = global.Physics.icingDiagnostics(time);
       if (global.Physics.approachSlantProfile) out.approachSlant = global.Physics.approachSlantProfile({ time });

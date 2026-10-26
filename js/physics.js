@@ -630,36 +630,203 @@
     };
   }
 
-  // —— 水平能见度场 + 统计量 ——
+  // 大气光学曙暮光（朝晚霞/火烧云）辐射传输评分与民航低太阳角跑道进近眩光风险算子
+  function twilightOpticsAndGlare(opts) {
+    opts = opts || {};
+    const sunElev = S.sunElev != null ? +S.sunElev : 35;
+    const sunAz = S.sunAz != null ? +S.sunAz : 220;
+    const runwayHdgDeg = opts.runwayHdgDeg != null ? +opts.runwayHdgDeg : 270;
+    const layers = A.effectiveLayers();
+
+    // 1. 寻找最佳中高云受光幕布层 (z >= 2.2 km) 与低云地平线遮挡因子 (z < 2.2 km)
+    let bestCanvasAltKm = 6.5, canvasScore = 0, lowCloudBlock = 0;
+    for (let i = 0; i < layers.length; i++) {
+      const L = layers[i];
+      const cov = L.coverage || 0, den = L.density || 0;
+      if (cov <= 0.02 || den <= 0.02) continue;
+      const zMid = 0.5 * (L.base + L.top);
+      if (zMid >= 2.2) {
+        const optCov = cov <= 0.75 ? (cov / 0.65) : Math.max(0.35, 1 - (cov - 0.75) * 1.8);
+        const layerQuality = Math.min(1, optCov) * Math.min(1, 0.4 + 0.8 * den) * (zMid >= 5.0 ? 1.12 : 0.95);
+        if (layerQuality > canvasScore) {
+          canvasScore = Math.min(1, layerQuality);
+          bestCanvasAltKm = +L.base.toFixed(1);
+        }
+      } else {
+        lowCloudBlock = Math.max(lowCloudBlock, Math.pow(cov, 1.35) * Math.min(1, den * 1.1));
+      }
+    }
+
+    // 2. Kasten & Young (1989) 球面大气斜程光学大气质量 M(θ_s)，含云高地平线俯角修正 α_dip ≈ 1.01°·√z_km
+    const dipAllowanceDeg = 1.01 * Math.sqrt(Math.max(0.5, bestCanvasAltKm));
+    const effElevDeg = sunElev + 0.65 * dipAllowanceDeg;
+    const clampedElev = Math.max(0.3, Math.min(89.9, effElevDeg));
+    const sinEl = Math.sin(clampedElev * Math.PI / 180);
+    const slantAirmass = +(1 / (sinEl + 0.50572 * Math.pow(clampedElev + 6.07995, -1.6364))).toFixed(2);
+
+    // 3. 瑞利散射 (λ^-4.08) + 气溶胶米氏消光 (Ångström α=1.3) 双波段 (650nm 红光 vs 450nm 蓝光) 斜程透射率
+    const tauAer550 = (S.aerosol && S.aerosol.on) ? Math.max(0.01, S.aerosol.beta0 * (S.aerosol.scaleH * 1000)) : 0.06;
+    const tauR650 = 0.048, tauR450 = 0.225;
+    const tauA650 = tauAer550 * Math.pow(550 / 650, 1.3);
+    const tauA450 = tauAer550 * Math.pow(550 / 450, 1.3);
+    const transRed = Math.exp(-Math.min(38, slantAirmass * (0.42 * tauR650 + 0.65 * tauA650)));
+    const transBlue = Math.exp(-Math.min(38, slantAirmass * (0.42 * tauR450 + 0.65 * tauA450)));
+    const reddening = transRed * Math.max(0, 1 - transBlue / Math.max(1e-4, transRed));
+
+    // 4. 太阳高度角窗口函数：太阳高度在 -4° ~ +10° 时斜程瑞利散射红化最显著
+    let elevWindow = 0;
+    if (sunElev >= -5.5 && sunElev <= 18) {
+      const dist = Math.abs(sunElev - 1.8);
+      elevWindow = Math.exp(-(dist * dist) / (2 * 5.2 * 5.2));
+    } else if (sunElev > 18) {
+      elevWindow = Math.max(0.04, 0.22 * Math.exp(-(sunElev - 18) / 15));
+    }
+
+    // 5. 综合朝晚霞/火烧云质量指数 (0–100) 与色温 (1850K–6200K)
+    // 斜程瑞利+气溶胶红化项 T_R·(1 - T_B/T_R) 的理论峰值约 0.36（在 M≈12–16 处达到极值），按峰值归一
+    const normRed = Math.min(1.08, reddening / 0.35);
+    const unblocked = Math.max(0.08, 1 - 0.82 * lowCloudBlock);
+    const rawGlow = 100 * elevWindow * normRed * (0.18 + 0.82 * canvasScore) * unblocked;
+    const glowIndex = Math.max(0, Math.min(100, Math.round(rawGlow)));
+    const glowGrade = glowIndex >= 75 ? 'SPECTACULAR' : (glowIndex >= 50 ? 'GOOD' : (glowIndex >= 25 ? 'FAIR' : 'POOR'));
+    const colorTempK = Math.round(6200 - 4250 * Math.min(1, elevWindow * normRed));
+    const dominantHueHex = colorTempK < 2400 ? '#ff4d2e' : (colorTempK < 3300 ? '#ff8533' : (colorTempK < 4500 ? '#ffd166' : '#8ab4f8'));
+
+    // 6. 民航跑道方向低太阳角进近眩光风险 (Sun-Glare Hazard on Final Approach)
+    const dAz = Math.abs(((sunAz - runwayHdgDeg + 540) % 360) - 180);
+    const dAzRecip = Math.abs(((sunAz - ((runwayHdgDeg + 180) % 360) + 540) % 360) - 180);
+    const minAzDiff = +Math.min(dAz, dAzRecip).toFixed(1);
+    let glareIndex = 0;
+    if (sunElev >= -0.5 && sunElev <= 20 && minAzDiff <= 35) {
+      const elFactor = Math.exp(-Math.pow(sunElev - 4.5, 2) / (2 * 6.5 * 6.5));
+      const azFactor = Math.exp(-Math.pow(minAzDiff, 2) / (2 * 16 * 16));
+      const mieForwardBoost = Math.min(1.35, 0.75 + 0.85 * Math.min(0.6, tauAer550 + 0.25 * lowCloudBlock));
+      const thickOvercastAtten = lowCloudBlock > 0.82 ? 0.25 : (1 - 0.55 * lowCloudBlock);
+      glareIndex = Math.max(0, Math.min(100, Math.round(100 * elFactor * azFactor * mieForwardBoost * thickOvercastAtten)));
+    }
+    const glareRisk = glareIndex >= 65 ? 'SEVERE' : (glareIndex >= 35 ? 'MODERATE' : 'LOW');
+    return {
+      glowIndex,
+      glowGrade,
+      colorTempK,
+      dominantHueHex,
+      bestCanvasAltKm,
+      canvasScore: +canvasScore.toFixed(2),
+      lowCloudBlockPct: Math.round(lowCloudBlock * 100),
+      slantAirmass,
+      transRedPct: +(transRed * 100).toFixed(1),
+      transBluePct: +(transBlue * 100).toFixed(1),
+      glareIndex,
+      glareRisk,
+      azimuthDiffDeg: minAzDiff,
+    };
+  }
+
+  // 单点三维气象与遥感探针点查（供空间场画布鼠标悬停/点击实时读数）
+  function inspectPointAt(xKm, yKm, zKm, time) {
+    const z = zKm != null ? +zKm : (S.sliceAlt || 0.3);
+    const t = time || 0;
+    const layers = A.effectiveLayers();
+    const wind = { x: S.windSpeed, dir: S.windDir };
+    const d = detailedAt(xKm, yKm, z, layers, wind, t);
+    const vis = A.visibilityFromExt(d.betaExt);
+    let colTau = 0, cTop = 0;
+    for (let zz = 0; zz <= 13.5; zz += 0.75) {
+      const dz = detailedAt(xKm, yKm, zz, layers, wind, t);
+      colTau += dz.betaExt * 750;
+      if (dz.density > 0.04 && zz > cTop) cTop = zz;
+    }
+    const TsfcK = Math.max(180, 273.15 + S.surfaceTemp + (S.envT || 0));
+    const TtopK = cTop > 0 ? Math.max(180, A.tempAt(cTop) + 273.15) : TsfcK;
+    const epsIr = 1 - Math.exp(-0.48 * colTau);
+    const tbK = Math.pow(epsIr * Math.pow(TtopK, 4) + (1 - epsIr) * Math.pow(TsfcK, 4), 0.25);
+    const tbC = +(tbK - 273.15).toFixed(1);
+    const veff = currentVeff();
+    const m6 = (1 + veff) * (1 + 2 * veff) * (1 + 3 * veff) / 1.716;
+    const zeCloud = d.lwc > 1e-5 ? 6.5e-5 * d.lwc * Math.pow(d.reUm || 8, 3) * m6 : 0;
+    const rainLocal = (S.precipRateMmH || 0) * (0.4 + 0.8 * Math.min(1, d.density * 1.5));
+    const zeRain = rainLocal > 0.01 ? 200 * Math.pow(rainLocal, 1.6) : 0;
+    const dbz = +Math.max(-35, 10 * Math.log10(Math.max(3.16e-4, zeCloud + zeRain))).toFixed(1);
+    const wp = A.windProfileAt ? A.windProfileAt(z) : { speedMs: S.windSpeed || 0, dirDeg: S.windDir || 270, uMs: S.windSpeed || 0, vMs: 0 };
+    const gust = (d.density - 0.2) * (1.2 + 2.5 * (S.convection || 0));
+    const uMs = +(wp.uMs + gust * Math.cos(xKm * 0.35 + yKm * 0.25)).toFixed(1);
+    const vMs = +(wp.vMs + gust * Math.sin(xKm * 0.25 - yKm * 0.35)).toFixed(1);
+    const speedMs = +Math.hypot(uMs, vMs).toFixed(1);
+    return {
+      xKm: +xKm.toFixed(1),
+      yKm: +yKm.toFixed(1),
+      zKm: +z.toFixed(2),
+      visM: isFinite(vis) ? Math.min(99999, Math.round(vis)) : 99999,
+      lwcGm3: +d.lwc.toFixed(3),
+      betaKm1: +(d.betaExt * 1000).toFixed(2),
+      tbC,
+      dbz,
+      tempC: +d.temp.toFixed(1),
+      uMs,
+      vMs,
+      windSpeedMs: speedMs,
+    };
+  }
+
+  // —— 水平多源复合场（能见度 / 红外亮温 Tb / 雷达回波 dBZ / LWC / 水平风矢）+ 统计量 ——
   function fieldStats(opts) {
     opts = opts || {};
     const N = opts.N || 32;
     const half = opts.half || 20;                 // km
     const z = opts.z != null ? opts.z : 0.3;       // 近地面水平面高度 km
+    const t = opts.time || 0;
     const layers = A.effectiveLayers();
     const wind = { x: S.windSpeed, dir: S.windDir };
     const field = new Float32Array(N * N);
+    const lwcField = new Float32Array(N * N);
+    const tbField = new Float32Array(N * N);
+    const dbzField = new Float32Array(N * N);
+    const uField = new Float32Array(N * N);
+    const vField = new Float32Array(N * N);
+    const wp = A.windProfileAt ? A.windProfileAt(z) : { uMs: S.windSpeed || 0, vMs: 0 };
+    const TsfcK = Math.max(180, 273.15 + S.surfaceTemp + (S.envT || 0));
+    let cloudTop = 0, cloudBase = 99;
+    layers.forEach(L => { if (L.coverage > 0.02) { cloudTop = Math.max(cloudTop, L.top); cloudBase = Math.min(cloudBase, L.base); } });
+    if (cloudBase > cloudTop) { cloudBase = 0; cloudTop = 0; }
+    const TtopBaseK = cloudTop > 0 ? Math.max(180, A.tempAt(cloudTop) + 273.15) : TsfcK;
+    const veff = currentVeff();
+    const m6 = (1 + veff) * (1 + 2 * veff) * (1 + 3 * veff) / 1.716;
+
     let minV = Infinity, maxV = 0, cloudy = 0, visUnder1k = 0;
     for (let i = 0; i < N; i++) {
       for (let j = 0; j < N; j++) {
         const x = -half + (2 * half) * i / (N - 1);
         const y = -half + (2 * half) * j / (N - 1);
-        const d = detailedAt(x, y, z, layers, wind, opts.time || 0);
+        const d = detailedAt(x, y, z, layers, wind, t);
+        const dTop = cloudTop > 0 ? detailedAt(x, y, Math.max(z, cloudTop * 0.72), layers, wind, t) : d;
         const vis = A.visibilityFromExt(d.betaExt);
         const vv = isFinite(vis) ? Math.min(vis, 99999) : 99999;
-        field[i * N + j] = vv;
+        const idx = i * N + j;
+        field[idx] = vv;
+        lwcField[idx] = d.lwc;
+        const tauColApprox = (d.betaExt * 1200 + dTop.betaExt * 1800);
+        const epsIr = 1 - Math.exp(-0.48 * tauColApprox);
+        const localTopK = Math.max(180, TtopBaseK - 6.5 * Math.max(0, dTop.density - 0.5));
+        const tbK = Math.pow(epsIr * Math.pow(localTopK, 4) + (1 - epsIr) * Math.pow(TsfcK, 4), 0.25);
+        tbField[idx] = tbK - 273.15;
+        const lwcMaxCol = Math.max(d.lwc, dTop.lwc);
+        const zeCloud = lwcMaxCol > 1e-5 ? 6.5e-5 * lwcMaxCol * Math.pow(d.reUm || 8, 3) * m6 : 0;
+        const rainLoc = Math.max(S.precipRateMmH || 0, lwcMaxCol > 0.35 ? (lwcMaxCol - 0.35) * 8.5 : 0) * (0.35 + 0.9 * Math.max(d.density, dTop.density));
+        const zeRain = rainLoc > 0.01 ? 200 * Math.pow(rainLoc, 1.6) : 0;
+        dbzField[idx] = Math.max(-35, 10 * Math.log10(Math.max(3.16e-4, zeCloud + zeRain)));
+        const convAmp = 0.8 + 3.2 * (S.convection || 0);
+        uField[idx] = wp.uMs + convAmp * (d.density - 0.25) * Math.cos(x * 0.28 + y * 0.19);
+        vField[idx] = wp.vMs + convAmp * (d.density - 0.25) * Math.sin(x * 0.19 - y * 0.28);
+
         if (vv < minV) minV = vv;
         if (vv > maxV) maxV = vv;
         if (d.density > 0.05) cloudy++;
         if (vv < 1000) visUnder1k++;
       }
     }
-    let cloudTop = 0, cloudBase = 99;
-    layers.forEach(L => { if (L.coverage > 0.02) { cloudTop = Math.max(cloudTop, L.top); cloudBase = Math.min(cloudBase, L.base); } });
-    if (cloudBase > cloudTop) { cloudBase = 0; cloudTop = 0; }
     let od = 0;
     for (let zz = 0; zz <= 14; zz += 0.25) {
-      const d = detailedAt(0, 0, zz, layers, wind, opts.time || 0);
+      const d = detailedAt(0, 0, zz, layers, wind, t);
       od += d.betaExt * 250;
     }
     const profN = 60; const prof = new Float32Array(profN);
@@ -669,13 +836,13 @@
       const M = 6;
       for (let s = 0; s < M; s++) {
         const x = -half + (2 * half) * s / (M - 1);
-        const d = detailedAt(x, 0, zz, layers, wind, opts.time || 0);
+        const d = detailedAt(x, 0, zz, layers, wind, t);
         sum += d.betaExt;
       }
       prof[zi] = sum / M;
     }
     return {
-      N, half, z, field, minV, maxV,
+      N, half, z, field, lwcField, tbField, dbzField, uField, vField, minV, maxV,
       coverage: cloudy / (N * N) * 100,
       visUnder1k: visUnder1k / (N * N) * 100,
       cloudTop, cloudBase, opticalDepth: od,
@@ -863,6 +1030,7 @@
     worstVisibilityDetailed, seedingDiagnostics, optimalSeedingPoint,
     approachSlantProfile, turbulenceAndShearDiagnostics,
     uavLowAltitudeAssessment, cruiseContrailAssessment,
+    twilightOpticsAndGlare, inspectPointAt,
     fieldStats, sensitivityGrid, sensitivityOpen,
     setPath, getPath, applyStatePatch,
   };

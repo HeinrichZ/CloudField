@@ -1239,6 +1239,26 @@ ok(byId.get('dash-snapshots') && byId.get('dash-snapshots').innerHTML.indexOf('T
 win.Monitor.clearSnapshots();
 ok(byId.get('ts-text') && byId.get('ts-text').value.length > 20 && byId.get('qc-text') && byId.get('qc-text').value.length > 20 && byId.get('ex-out') && byId.get('ex-out').value.length > 10 && byId.get('val-sonde-text') && byId.get('val-sonde-text').value.length > 10,
   '高级诊断面板：时变预报/数据质控/业务输出/验证评估 打开即预填有效初始内容，无空白失灵');
+
+// 18) 分支增强：多源卫星红外/雷达复合图层、鼠标点查探针、曙暮光（朝晚霞/火烧云）辐射传输与跑道低阳进近眩光算子
+win.Help.applyScenario('twilight');
+const tw = win.Physics.twilightOpticsAndGlare({ runwayHdgDeg: 270 });
+ok(tw && tw.glowIndex >= 70 && tw.colorTempK < 3200 && tw.glareIndex >= 40 && tw.slantAirmass > 10,
+  'Physics.twilightOpticsAndGlare 解算曙暮光/朝晚霞指数、斜程大气质量 M(θ_s)、主散射色温与跑道 27 低阳进近眩光风险',
+  `glow=${tw.glowIndex}/100 (${tw.glowGrade}), Tc=${tw.colorTempK}K, M=${tw.slantAirmass}, glare=${tw.glareIndex}/100 (${tw.glareRisk})`);
+const fst = win.Physics.fieldStats({ z: 6.2, N: 16 });
+ok(fst.tbField instanceof Float32Array && fst.dbzField instanceof Float32Array && fst.uField instanceof Float32Array && fst.tbField.length === 256,
+  'Physics.fieldStats 同时输出水平能见度、10.8µm 红外亮温场 tbField、雷达回波场 dbzField 与水平风矢量场 uField/vField');
+const ptProbe = win.Physics.inspectPointAt(0, 0, 6.2, 0);
+ok(ptProbe && isFinite(ptProbe.tbC) && isFinite(ptProbe.dbz) && isFinite(ptProbe.windSpeedMs),
+  'Physics.inspectPointAt 单点探针实时返回 (x, y, z) 亮温 Tb、雷达回波 dBZ、LWC、能见度与风速',
+  `Tb=${ptProbe.tbC}°C, Z=${ptProbe.dbz}dBZ, V=${ptProbe.visM}m, wind=${ptProbe.windSpeedMs}m/s`);
+const irColCold = win.Monitor.irColor(-62, 'ir_enh');
+const irColWarm = win.Monitor.irColor(18, 'ir_enh');
+ok(Array.isArray(irColCold) && irColCold[0] > 200 && irColCold[2] > 150 && irColWarm[0] < 80,
+  'Monitor.irColor 支持标准红外灰阶与强对流增强红外色表（冷云顶高亮紫红、暖地表暗灰）');
+ok(byId.get('sp-base-sel') && byId.get('sp-probe'),
+  '空间场面板集成多图层底图选择器 (#sp-base-sel) 与交互式鼠标点查读数栏 (#sp-probe)');
 Amod.deserialize(snapBefore9);
 
 // ================= 汇总 =================

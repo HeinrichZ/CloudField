@@ -80,6 +80,13 @@
       phases: { water: 0.55, ice: 0.25, snow: 0.05, graupel: 0.15, hail: 0 },
       aerosol: { on: false, beta0: 1e-4, scaleH: 1.5, omega: 0.92 },
     },
+    twilight: {
+      scalars: { surfaceTemp: 17, surfacePressure: 1015, surfaceRH: 62, windSpeed: 5, windDir: 265, sunElev: 2.2, sunAz: 266, lapseRate: 6.4, dewLapse: 1.8, convection: 18, sliceAlt: 6.2, precipRateMmH: 0 },
+      layers: { ci: { on: true, coverage: 0.65, density: 0.68, base: 8.0, top: 11.5 }, cs: { on: true, coverage: 0.58, density: 0.62, base: 4.8, top: 7.5 }, cu: { on: false, coverage: 0, density: 0, base: 0.8, top: 3.5 }, sc: { on: true, coverage: 0.12, density: 0.25, base: 0.6, top: 1.3 }, cb: { on: false, coverage: 0, density: 0, base: 0.6, top: 9 } },
+      micro: { scheme: 'kk2000', reMode: 'derived', effRadiusUm: 18, dropConc: 90, autoPhaseTemp: true },
+      phases: { water: 0.25, ice: 0.75, snow: 0, graupel: 0, hail: 0 },
+      aerosol: { on: true, beta0: 8e-5, scaleH: 1.4, omega: 0.94 },
+    },
   };
 
   function applyScenario(name) {

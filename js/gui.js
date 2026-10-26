@@ -558,38 +558,71 @@
       global.TimeSeries.applyDefault();
     }
     ta.value = formatTSSteps();
+    let speedMult = 1.0;
     const row = document.createElement('div'); row.className = 'btn-row wrap';
     row.appendChild(btn(I18N.t('ts.default'), () => { global.TimeSeries.applyDefault(); ta.value = formatTSSteps(); updateTSCurve(); }));
     row.appendChild(btn(I18N.t('ts.import'), () => { const r = global.TimeSeries.importTimeSeries(ta.value); if (!r.ok) alert(r.msg); else updateTSCurve(); }));
-    const playBtn = btn(I18N.t('ts.play'));
-    row.appendChild(playBtn); row.appendChild(btn(I18N.t('ts.loop'), () => { global.TimeSeries.TS.loop = !global.TimeSeries.TS.loop; }));
+    const playBtn = btn('▶ ' + I18N.t('ts.play'));
+    const revBtn = btn(I18N.t('ts.reverse'));
+    row.appendChild(playBtn);
+    row.appendChild(revBtn);
+    row.appendChild(btn(I18N.t('ts.stepBack'), () => stepBy(-0.5)));
+    row.appendChild(btn(I18N.t('ts.stepFwd'), () => stepBy(0.5)));
+    [0.5, 1, 2].forEach(sp => {
+      const sb = btn(sp + '×', () => {
+        speedMult = sp;
+        row.querySelectorAll('.ts-spd').forEach(x => x.classList.remove('active'));
+        sb.classList.add('active');
+      });
+      sb.className = 'act ts-spd' + (sp === 1 ? ' active' : '');
+      row.appendChild(sb);
+    });
+    row.appendChild(btn(I18N.t('ts.loop'), () => { global.TimeSeries.TS.loop = !global.TimeSeries.TS.loop; }));
     root.appendChild(row);
     const cv = document.createElement('canvas'); cv.id = 'ts-curve'; cv.width = 420; cv.height = 170; cv.className = 'adv-canvas'; root.appendChild(cv);
     const slider = document.createElement('input'); slider.type = 'range'; slider.min = '0'; slider.max = '1000'; slider.value = '0'; root.appendChild(slider);
     const lab = document.createElement('div'); lab.className = 'range-hint'; root.appendChild(lab);
     const updateLab = (t) => {
       const w = global.Physics.worstVisibilityDetailed(0);
-      lab.textContent = I18N.t('ts.t0') + ' ' + t.toFixed(1) + 'h  vis=' + (isFinite(w.vis) ? (w.vis >= 1000 ? (w.vis / 1000).toFixed(2) + 'km' : w.vis.toFixed(0) + 'm') : '∞');
+      lab.textContent = I18N.t('ts.t0') + ' ' + t.toFixed(1) + 'h (' + speedMult + '×)  vis=' + (isFinite(w.vis) ? (w.vis >= 1000 ? (w.vis / 1000).toFixed(2) + 'km' : w.vis.toFixed(0) + 'm') : '∞');
+    };
+    const seekTo = (t) => {
+      const ts = global.TimeSeries.TS; if (!ts.steps.length) global.TimeSeries.applyDefault();
+      const clamped = Math.max(ts.t0, Math.min(ts.t1, t));
+      global.TimeSeries.sampleAt(clamped);
+      slider.value = String(Math.round((clamped - ts.t0) / Math.max(1e-6, ts.t1 - ts.t0) * 1000));
+      syncValues();
+      if (global.__cf) global.__cf.onChange();
+      updateLab(clamped);
+    };
+    const stepBy = (dt) => {
+      const ts = global.TimeSeries.TS; if (!ts.steps.length) global.TimeSeries.applyDefault();
+      seekTo((ts.tNow != null ? ts.tNow : ts.t0) + dt);
     };
     slider.addEventListener('input', () => {
       const ts = global.TimeSeries.TS; if (!ts.steps.length) global.TimeSeries.applyDefault();
-      const t = ts.t0 + (ts.t1 - ts.t0) * slider.value / 1000; global.TimeSeries.sampleAt(t);
-      syncValues();
-      if (global.__cf) global.__cf.onChange();
-      updateLab(t);
+      const t = ts.t0 + (ts.t1 - ts.t0) * slider.value / 1000;
+      seekTo(t);
     });
-    playBtn.onclick = () => {
-      if (tsTimer) { clearInterval(tsTimer); tsTimer = null; playBtn.textContent = I18N.t('ts.play'); return; }
+    const startLoop = (dir) => {
+      if (tsTimer) { clearInterval(tsTimer); tsTimer = null; playBtn.textContent = '▶ ' + I18N.t('ts.play'); revBtn.textContent = I18N.t('ts.reverse'); return; }
       const ts = global.TimeSeries.TS; if (!ts.steps.length) global.TimeSeries.applyDefault();
-      playBtn.textContent = '⏸'; let t = global.TimeSeries.TS.t0;
+      if (dir > 0) playBtn.textContent = '⏸'; else revBtn.textContent = '⏸';
+      let t = (ts.tNow != null && ts.tNow > ts.t0 && ts.tNow < ts.t1) ? ts.tNow : (dir > 0 ? ts.t0 : ts.t1);
       tsTimer = setInterval(() => {
-        global.TimeSeries.sampleAt(t); slider.value = String(Math.round((t - ts.t0) / (ts.t1 - ts.t0) * 1000));
-        syncValues();
-        if (global.__cf) global.__cf.onChange();
-        updateLab(t);
-        t += 0.5; if (t > ts.t1) { if (global.TimeSeries.TS.loop) t = ts.t0; else { clearInterval(tsTimer); tsTimer = null; playBtn.textContent = I18N.t('ts.play'); } }
+        seekTo(t);
+        t += dir * 0.5 * speedMult;
+        if (dir > 0 && t > ts.t1) {
+          if (global.TimeSeries.TS.loop) t = ts.t0;
+          else { clearInterval(tsTimer); tsTimer = null; playBtn.textContent = '▶ ' + I18N.t('ts.play'); }
+        } else if (dir < 0 && t < ts.t0) {
+          if (global.TimeSeries.TS.loop) t = ts.t1;
+          else { clearInterval(tsTimer); tsTimer = null; revBtn.textContent = I18N.t('ts.reverse'); }
+        }
       }, 120);
     };
+    playBtn.onclick = () => startLoop(1);
+    revBtn.onclick = () => startLoop(-1);
     function updateTSCurve() {
       const cv = document.getElementById('ts-curve'); if (!cv) return;
       if (global.TimeSeries && (!global.TimeSeries.TS.steps || !global.TimeSeries.TS.steps.length)) global.TimeSeries.applyDefault();
@@ -603,20 +636,71 @@
 
   function buildSpatialPane(root) {
     root.innerHTML = '<h3>' + I18N.t('sp.title') + '</h3>';
-    // 与右侧剖面轴同区间（0–14 km），否则先拖到 3 km 再开此页会被钳到 2 km，看起来像数值错乱
     root.appendChild(rangeCtrl(I18N.t('sp.alt'), 0, 14, 0.1, 'km', () => S.sliceAlt, v => {
       S.sliceAlt = v;
       if (global.__cfAxis && global.__cfAxis.refresh) global.__cfAxis.refresh();
+      updateField();
     }, x => x.toFixed(1)));
-    const row = document.createElement('div'); row.className = 'btn-row wrap';
-    row.appendChild(btn(I18N.t('sp.compute'), () => updateField())); root.appendChild(row);
-    const cv = document.createElement('canvas'); cv.id = 'sp-field'; cv.width = 256; cv.height = 256; cv.className = 'adv-canvas'; root.appendChild(cv);
+    let baseLayer = 'vis', overlayWind = true, overlayIso = false, lockedProbe = null, lastFieldSt = null;
+    const layerRow = document.createElement('div'); layerRow.className = 'btn-row wrap';
+    const baseSel = document.createElement('select');
+    baseSel.id = 'sp-base-sel';
+    baseSel.innerHTML = opt([
+      ['vis', I18N.t('sp.layerVis')],
+      ['ir_enh', I18N.t('sp.layerIrEnh')],
+      ['ir_bw', I18N.t('sp.layerIrBw')],
+      ['radar', I18N.t('sp.layerRadar')],
+      ['lwc', I18N.t('sp.layerLwc')],
+    ]);
+    baseSel.onchange = () => { baseLayer = baseSel.value; renderCanvasOnly(); };
+    layerRow.appendChild(baseSel);
+    const windBtn = btn(I18N.t('sp.overlayWind'), () => { overlayWind = !overlayWind; windBtn.classList.toggle('active', overlayWind); renderCanvasOnly(); });
+    windBtn.classList.add('active');
+    const isoBtn = btn(I18N.t('sp.overlayIso'), () => { overlayIso = !overlayIso; isoBtn.classList.toggle('active', overlayIso); renderCanvasOnly(); });
+    layerRow.appendChild(windBtn);
+    layerRow.appendChild(isoBtn);
+    layerRow.appendChild(btn(I18N.t('sp.compute'), () => updateField()));
+    root.appendChild(layerRow);
+
+    const cv = document.createElement('canvas'); cv.id = 'sp-field'; cv.width = 256; cv.height = 256; cv.className = 'adv-canvas'; cv.style.cursor = 'crosshair'; root.appendChild(cv);
+    const probeEl = document.createElement('div'); probeEl.id = 'sp-probe'; probeEl.className = 'range-hint';
+    probeEl.textContent = I18N.t('sp.probeHint');
+    root.appendChild(probeEl);
+
+    function renderCanvasOnly(hoverProbe) {
+      if (!lastFieldSt || !global.Monitor) return;
+      const activeProbe = hoverProbe || lockedProbe;
+      global.Monitor.drawField(cv, lastFieldSt, lastFieldSt.N, lastFieldSt.minV, Math.min(lastFieldSt.maxV, 10000), {
+        baseLayer, overlayWind, overlayIso, probe: activeProbe,
+      });
+    }
+    function handleProbeEvent(e, lockToggle) {
+      const r = cv.getBoundingClientRect ? cv.getBoundingClientRect() : { left: 0, top: 0, width: cv.width, height: cv.height };
+      const px = Math.max(0, Math.min(cv.width, (e.clientX - r.left) * (cv.width / Math.max(1, r.width))));
+      const py = Math.max(0, Math.min(cv.height, (e.clientY - r.top) * (cv.height / Math.max(1, r.height))));
+      const half = (lastFieldSt && lastFieldSt.half) || 20;
+      const xKm = -half + (px / cv.width) * (2 * half);
+      const yKm = -half + (py / cv.height) * (2 * half);
+      if (lockToggle) {
+        if (lockedProbe && Math.hypot(lockedProbe.px - px, lockedProbe.py - py) < 10) lockedProbe = null;
+        else lockedProbe = { px, py, xKm, yKm };
+      }
+      const pInfo = global.Physics.inspectPointAt ? global.Physics.inspectPointAt(xKm, yKm, S.sliceAlt, 0) : null;
+      if (pInfo) {
+        probeEl.textContent = (lockedProbe ? '📌 ' : '📍 ') +
+          `(${pInfo.xKm}, ${pInfo.yKm}, z=${pInfo.zKm}km) · V=${pInfo.visM >= 10000 ? '≥10km' : pInfo.visM + 'm'} · Tb=${pInfo.tbC}°C · Z=${pInfo.dbz}dBZ · LWC=${pInfo.lwcGm3}g/m³ · 风=${pInfo.windSpeedMs}m/s`;
+      }
+      renderCanvasOnly({ px, py, xKm, yKm });
+    }
+    cv.addEventListener('mousemove', e => { if (!lockedProbe) handleProbeEvent(e, false); });
+    cv.addEventListener('click', e => handleProbeEvent(e, true));
+
     const stats = document.createElement('div'); stats.id = 'sp-stats'; stats.className = 'stat-cards'; root.appendChild(stats);
-    // 观测算子读数：只显示侧栏开关勾选的算子（开关不再是无效果的摆设）
     const opsEl = document.createElement('div'); opsEl.id = 'sp-ops'; opsEl.className = 'stat-cards'; root.appendChild(opsEl);
     function updateField() {
       const st = global.Physics.fieldStats({ z: S.sliceAlt, N: 48 });
-      if (global.Monitor) global.Monitor.drawField(cv, st.field, st.N, st.minV, Math.min(st.maxV, 10000));
+      lastFieldSt = st;
+      renderCanvasOnly();
       const el = document.getElementById('sp-stats');
       const me = st.meanExtProfile[Math.floor(st.meanExtProfile.length / 2)].toFixed(4);
       el.innerHTML = card(I18N.t('sp.coverage'), st.coverage.toFixed(0) + '%') + card(I18N.t('sp.cloudTop'), st.cloudTop.toFixed(1) + 'km') +
@@ -629,11 +713,15 @@
         if (o.creSW != null) rows.push(card('CRE_SW', o.creSW.toFixed(1) + ' W/m²'));
         if (o.irradiance) rows.push(card(I18N.t('op.irradiance'), o.irradiance.total.toFixed(0) + ' W/m²'));
         if (o.albedo != null) rows.push(card(I18N.t('op.albedo'), o.albedo.toFixed(3)));
-        if (o.satelliteTb != null) rows.push(card(I18N.t('op.satellite'), o.satelliteTb.toFixed(1) + ' K'));
+        if (o.satelliteTb != null) rows.push(card(I18N.t('op.satellite'), o.satelliteTb.toFixed(1) + ' K (' + (o.satelliteTb - 273.15).toFixed(1) + '°C)'));
         if (o.lidar) rows.push(card(I18N.t('op.lidar'), o.lidar.betaBack.toExponential(2)));
         if (o.radar) {
           rows.push(card(I18N.t('op.radar'), o.radar.dBZ.toFixed(1) + ' dBZ'));
           rows.push(card('机载 WXR (X波段)', o.radar.dBZXBand.toFixed(1) + ' dBZ · ' + o.radar.wxrColor + (o.radar.pacShadowAlert ? ' [PAC雨衰告警]' : '')));
+        }
+        if (o.twilight) {
+          rows.push(card('🌅 朝晚霞指数 / 色温', o.twilight.glowIndex + '/100 (' + o.twilight.glowGrade + ') · ' + o.twilight.colorTempK + 'K · 幕布 ' + o.twilight.bestCanvasAltKm + 'km'));
+          rows.push(card('☀️ 跑道低太阳角进近眩光', o.twilight.glareRisk + ' (' + o.twilight.glareIndex + '/100 · Δψ=' + o.twilight.azimuthDiffDeg + '° · M=' + o.twilight.slantAirmass + ')'));
         }
         if (o.turbulence) rows.push(card('湍流 EDR / 低空风切变', o.turbulence.edrMax.toFixed(2) + ' (' + o.turbulence.edrSeverity + ') · ' + o.turbulence.llwsKtPer100Ft + ' kt/100ft'));
         if (o.thermo) {
@@ -939,6 +1027,7 @@
       ['cbstorm', 'Cb Storm'],
       ['fzra', I18N.t('help.fzra')],
       ['plateau', I18N.t('help.plateau')],
+      ['twilight', I18N.t('help.twilight')],
     ].forEach(([k, lbl]) => {
       row.appendChild(btn(lbl, () => {
         if (global.Help) global.Help.applyScenario(k);

@@ -746,25 +746,154 @@
     }
   }
 
-  // 水平能见度场（N×N 网格，值单位 m）
-  function drawField(cv, field, N, minV, maxV) {
+  // 卫星红外亮温色表（°C）：支持标准红外灰阶 ('ir_bw') 与强对流增强红外色表 ('ir_enh', -80°C ~ +30°C)
+  function irColor(tbC, mode) {
+    if (!isFinite(tbC)) return [20, 30, 50];
+    if (mode === 'ir_bw') {
+      const t = clamp((30 - tbC) / 110, 0, 1); // +30°C 暗灰 → -80°C 亮白
+      const g = Math.round(18 + 232 * Math.pow(t, 0.88));
+      return [g, g + 2, Math.min(255, g + 8)];
+    }
+    // 强对流增强红外色表 (Enhanced IR BD/WMO)
+    if (tbC > 5) {
+      const k = clamp((30 - tbC) / 25, 0, 1);
+      return [Math.round(22 + 45 * k), Math.round(28 + 52 * k), Math.round(42 + 60 * k)];
+    }
+    if (tbC > -20) {
+      const k = (5 - tbC) / 25;
+      return [Math.round(67 + 90 * k), Math.round(80 + 115 * k), Math.round(102 + 125 * k)];
+    }
+    if (tbC > -38) {
+      const k = (-20 - tbC) / 18;
+      return [Math.round(45 * (1 - k) + 30 * k), Math.round(185 + 50 * k), Math.round(235 - 120 * k)];
+    }
+    if (tbC > -54) {
+      const k = (-38 - tbC) / 16;
+      return [Math.round(240 + 15 * k), Math.round(215 - 140 * k), Math.round(45 - 25 * k)];
+    }
+    const k = clamp((-54 - tbC) / 26, 0, 1);
+    return [Math.round(235 + 20 * k), Math.round(40 + 175 * k), Math.round(160 + 95 * k)];
+  }
+
+  function radarColor(dbz) {
+    if (!isFinite(dbz) || dbz < -15) return [12, 18, 32];
+    if (dbz < 5) {
+      const k = (dbz + 15) / 20;
+      return [Math.round(16 + 30 * k), Math.round(35 + 75 * k), Math.round(70 + 110 * k)];
+    }
+    if (dbz < 20) {
+      const k = (dbz - 5) / 15;
+      return [Math.round(35 * (1 - k)), Math.round(140 + 85 * k), Math.round(210 - 95 * k)];
+    }
+    if (dbz < 35) {
+      const k = (dbz - 20) / 15;
+      return [Math.round(40 + 205 * k), Math.round(225 - 20 * k), Math.round(80 - 50 * k)];
+    }
+    if (dbz < 48) {
+      const k = (dbz - 35) / 13;
+      return [250, Math.round(190 - 145 * k), Math.round(35 + 20 * k)];
+    }
+    return [245, 75, 215];
+  }
+
+  // 水平多源复合场（支持能见度 'vis' / 卫星增强红外 'ir_enh' / 红外灰阶 'ir_bw' / 雷达回波 'radar' / 液水 'lwc' + 等值线 + 风矢 + 探针准星）
+  function drawField(cv, fieldOrSt, N, minV, maxV, opts) {
     const ctx = cv.getContext('2d');
     const W = cv.width, H = cv.height;
     ctx.clearRect(0, 0, W, H); ctx.fillStyle = '#070b15'; ctx.fillRect(0, 0, W, H);
-    if (!field || !N) return;
+    const isStObj = fieldOrSt && !(fieldOrSt instanceof Float32Array) && !Array.isArray(fieldOrSt) && fieldOrSt.field;
+    const st = isStObj ? fieldOrSt : null;
+    const o = opts || {};
+    const baseMode = o.baseLayer || 'vis';
+    let grid = isStObj ? st.field : fieldOrSt;
+    if (isStObj) {
+      if ((baseMode === 'ir_enh' || baseMode === 'ir_bw') && st.tbField) grid = st.tbField;
+      else if (baseMode === 'radar' && st.dbzField) grid = st.dbzField;
+      else if (baseMode === 'lwc' && st.lwcField) grid = st.lwcField;
+    }
+    N = N || (st && st.N) || 0;
+    if (!grid || !N) return;
     const img = ctx.createImageData(N, N);
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
-      const v = field[i * N + j];
-      const c = v == null ? [20, 30, 50] : visColor(v);
-      const idx = (j * N + i) * 4; img.data[idx] = c[0]; img.data[idx + 1] = c[1]; img.data[idx + 2] = c[2]; img.data[idx + 3] = 255;
+      const v = grid[i * N + j];
+      let c;
+      if (v == null || !isFinite(v)) c = [20, 30, 50];
+      else if (baseMode === 'ir_enh' || baseMode === 'ir_bw') c = irColor(v, baseMode);
+      else if (baseMode === 'radar') c = radarColor(v);
+      else if (baseMode === 'lwc') c = CM.sampleRGB ? CM.sampleRGB('lwc', CM.norm('lwc', v)) : rampColor(clamp(v / 1.2, 0, 1));
+      else c = visColor(v);
+      const idx = (j * N + i) * 4;
+      img.data[idx] = c[0]; img.data[idx + 1] = c[1]; img.data[idx + 2] = c[2]; img.data[idx + 3] = 255;
     }
-    // 复用共享离屏 Canvas 放大绘制，避免频繁创建 DOM 节点
     const off = sharedOff || document.createElement('canvas');
     if (off.width !== N || off.height !== N) { off.width = N; off.height = N; }
     (sharedOffCtx || off.getContext('2d')).putImageData(img, 0, 0);
     ctx.imageSmoothingEnabled = true; ctx.drawImage(off, 0, 0, W, H);
-    ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.beginPath();
+
+    // 可选叠加 1：等值线图层 (Iso-contours)
+    if (o.overlayIso) {
+      const levels = baseMode === 'vis' ? [550, 1500, 5000]
+        : (baseMode === 'radar' ? [5, 20, 35]
+        : (baseMode === 'lwc' ? [0.15, 0.45, 0.85] : [-50, -30, -10, 5]));
+      ctx.strokeStyle = 'rgba(255, 238, 170, 0.52)';
+      ctx.lineWidth = 1;
+      for (let li = 0; li < levels.length; li++) {
+        const lv = levels[li];
+        ctx.beginPath();
+        for (let j = 0; j < N - 1; j++) {
+          for (let i = 0; i < N - 1; i++) {
+            const v00 = grid[i * N + j], v10 = grid[(i + 1) * N + j], v01 = grid[i * N + (j + 1)];
+            if ((v00 - lv) * (v10 - lv) < 0 || (v00 - lv) * (v01 - lv) < 0) {
+              const px = (i + 0.5) / N * W, py = (j + 0.5) / N * H;
+              ctx.moveTo(px - 1.5, py); ctx.lineTo(px + 1.5, py);
+            }
+          }
+        }
+        ctx.stroke();
+      }
+    }
+
+    // 可选叠加 2：水平风场矢量箭矢图层 (Wind Vectors)
+    if (o.overlayWind && st && st.uField && st.vField) {
+      const step = Math.max(2, Math.floor(N / 8));
+      ctx.strokeStyle = 'rgba(220, 240, 255, 0.78)';
+      ctx.fillStyle = 'rgba(220, 240, 255, 0.78)';
+      ctx.lineWidth = 1.1;
+      for (let j = Math.floor(step / 2); j < N; j += step) {
+        for (let i = Math.floor(step / 2); i < N; i += step) {
+          const u = st.uField[i * N + j] || 0, v = st.vField[i * N + j] || 0;
+          const spd = Math.hypot(u, v);
+          if (spd < 0.2) continue;
+          const cx = (i + 0.5) / N * W, cy = (j + 0.5) / N * H;
+          const len = Math.min(16, 4 + spd * 0.75);
+          const ux = u / spd, uy = -v / spd;
+          const ex = cx + ux * len, ey = cy + uy * len;
+          ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(ex, ey); ctx.stroke();
+          // 箭头翼
+          const hx = ex - ux * 3.5, hy = ey - uy * 3.5;
+          ctx.beginPath();
+          ctx.moveTo(ex, ey);
+          ctx.lineTo(hx - uy * 2.2, hy + ux * 2.2);
+          ctx.lineTo(hx + uy * 2.2, hy - ux * 2.2);
+          ctx.closePath(); ctx.fill();
+        }
+      }
+    }
+
+    // 中心十字基准线
+    ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.lineWidth = 1; ctx.beginPath();
     ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
+
+    // 可选叠加 3：鼠标点查探针十字准星 (Point Inspector Crosshair)
+    if (o.probe && isFinite(o.probe.px) && isFinite(o.probe.py)) {
+      const px = o.probe.px, py = o.probe.py;
+      ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(px - 9, py); ctx.lineTo(px + 9, py);
+      ctx.moveTo(px, py - 9); ctx.lineTo(px, py + 9);
+      ctx.stroke();
+    }
   }
 
   // 参数敏感性热力图（N×N，值可为 vis 或光学厚度）
@@ -944,6 +1073,6 @@
 
   global.Monitor = {
     init, update, drawProfile, addSnapshot, clearSnapshots, getSnapshots: () => snapshots, setAxis, syncTabLabels,
-    drawCurve, drawField, drawHeatmap, drawScatter, drawTaylor, drawSchemeComparison,
+    drawCurve, drawField, irColor, radarColor, drawHeatmap, drawScatter, drawTaylor, drawSchemeComparison,
   };
 })(window);
