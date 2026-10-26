@@ -1124,6 +1124,37 @@ ok(batchRow.uavStatus != null && batchRow.capeJkg != null && typeof batchRow.con
   'plateau（高原高温高密）场景及 Batch / Exporter.toExperimentYAML / Report.generateHTML 完整包含热力学、积冰、下滑道 SVR、UAV 与巡航尾迹全字段',
   `Batch CAPE=${batchRow.capeJkg} J/kg, UAV=${batchRow.uavStatus}, Contrail=${batchRow.contrailPersistent}`);
 
+// 16) MATLAB / Simulink 与主流 CFD 求解器（OpenFOAM / ANSYS Fluent / FENSAP-ICE / ParaView VTK）兼容性校验
+win.Help.applyScenario('fzra');
+const wp0 = Amod.windProfileAt(0.01);
+const wp1 = Amod.windProfileAt(1.0);
+ok(wp1.speedMs > wp0.speedMs && wp1.tkeM2s2 > 0 && wp1.epsM2s3 > 0 && wp1.rhoKgm3 > 0.5 && wp1.thetaK > 260,
+  'Atmosphere.windProfileAt 输出边界层幂律风切变、Ekman 风向顺转、湍流动能 TKE k(z) 与耗散率 ε(z)',
+  `U(10m)=${wp0.speedMs}m/s (${wp0.dirDeg}°) → U(1km)=${wp1.speedMs}m/s (${wp1.dirDeg}°), k=${wp1.tkeM2s2} m²/s², ε=${wp1.epsM2s3} m²/s³`);
+
+const langSpec = win.Physics.langmuirDropletSpectrum({ zKm: 0.6, airspeedMs: 90 });
+const wSum = langSpec.bins.reduce((s, b) => s + b.weight, 0);
+ok(langSpec.bins.length === 7 && Math.abs(wSum - 1.0) < 1e-6 && langSpec.mvdUm > 30 && langSpec.stagnationBeta0 > 0.4 && langSpec.iceRegime !== 'NONE',
+  'Physics.langmuirDropletSpectrum 输出 FENSAP-ICE / NASA LEWICE 7-Bin Langmuir 多分档液滴谱、驻点收集效率 β0 与 Messinger 冻结分数',
+  `MVD=${langSpec.mvdUm}µm, β0=${langSpec.stagnationBeta0}, f_freeze=${langSpec.freezingFraction} (${langSpec.iceRegime})`);
+
+const mScript = win.Exporter.toMATLABScript(0);
+const foamDict = win.Exporter.toOpenFOAM(0);
+const fluentProf = win.Exporter.toFluentProfile(0);
+const vtkGrid = win.Exporter.toVTK3D({ nx: 8, ny: 8, nz: 6 });
+ok(mScript.includes('cf.profile.z_m = [') && mScript.includes('cf.slice.vis_m = [') && mScript.includes('cf.langmuir.weights = ['),
+  'Exporter.toMATLABScript 导出兼容 MATLAB / Simulink / Aerospace Blockset 的原生 .m 结构体脚本',
+  `length=${mScript.length} chars`);
+ok(foamDict.includes('FoamFile') && foamDict.includes('object      ABLConditions;') && foamDict.includes('profileTable'),
+  'Exporter.toOpenFOAM 导出标准 OpenFOAM 2.0 ABLConditions 边界层入口字典',
+  `length=${foamDict.length} chars`);
+ok(fluentProf.includes('((cloudfield-abl-inlet point 57)') && fluentProf.includes('(turbulent-kinetic-energy ') && fluentProf.includes('FENSAP-ICE / NASA LEWICE 7-Bin Langmuir'),
+  'Exporter.toFluentProfile 导出兼容 ANSYS Fluent 的 S-Expression 边界廓线 (.prof) 及 FENSAP-ICE 7-Bin 液滴谱头信息',
+  `length=${fluentProf.length} chars`);
+ok(vtkGrid.includes('# vtk DataFile Version 3.0') && vtkGrid.includes('DATASET STRUCTURED_POINTS') && vtkGrid.includes('SCALARS LWC_gm3 float 1') && vtkGrid.includes('VECTORS wind_velocity_ms float'),
+  'Exporter.toVTK3D 导出兼容 ParaView / Tecplot / VisIt 的三维结构化网格 (.vtk) 标量场与风矢量场',
+  `length=${vtkGrid.length} chars`);
+
 Amod.deserialize(snapBefore9);
 
 // ================= 汇总 =================

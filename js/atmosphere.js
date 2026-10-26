@@ -195,6 +195,55 @@
     const Tk = tempAt(z) + 273.15;
     return p / (R * Tk);
   }
+  // 大气边界层与自由对流层垂直风廓线、Ekman 风向顺转、湍流动能 TKE k(z) 与耗散率 ε(z)（供 MATLAB / Simulink 与 OpenFOAM / Fluent CFD 入口边界使用）
+  function windProfileAt(z) {
+    const zz = Math.max(0, z || 0);
+    const zm = Math.max(10, zz * 1000);
+    const u10 = Math.max(0, STATE.windSpeed || 0);
+    const dir0 = STATE.windDir || 0;
+    const zAblM = 1200;
+    // Hellmann 幂律边界层切变 (α=0.16) + 自由大气热成风切变
+    const speedMs = u10 > 0
+      ? u10 * Math.pow(Math.min(zm, zAblM) / 10, 0.16) + Math.max(0, zz - 1.2) * (0.15 * u10 + 0.8)
+      : 0;
+    // 北半球 Ekman 螺线边界层风向随高度顺时针偏转 (0 → +20°)
+    const ekmanVeerDeg = u10 > 0 ? 20 * (1 - Math.exp(-zz / 0.65)) : 0;
+    const dirDeg = ((dir0 + ekmanVeerDeg) % 360 + 360) % 360;
+    const goRad = (dirDeg + 180) * Math.PI / 180;
+    const uMs = +(speedMs * Math.sin(goRad)).toFixed(3);
+    const vMs = +(speedMs * Math.cos(goRad)).toFixed(3);
+    const conv = Math.max(0, STATE.convection || 0) / 100;
+    const wUpdraftMs = +(conv * 2.5 * Math.exp(-Math.pow((zz - 2.0) / 2.2, 2))).toFixed(3);
+    // 边界层摩擦速度 u*、混合长 l_m 与 k-ε 湍流闭合量 (C_μ = 0.09)
+    const uStar = 0.082 * u10 + 0.06;
+    const wStar = 2.2 * conv;
+    const cMu = 0.09;
+    const tkeM2s2 = +Math.max(0.015, (uStar * uStar / Math.sqrt(cMu)) * Math.exp(-zz / 1.8) + 0.35 * wStar * wStar * Math.exp(-Math.pow((zz - 1.6) / 2.4, 2))).toFixed(4);
+    const kappaZ = 0.41 * zm;
+    const lMixM = Math.max(2.0, kappaZ / (1 + kappaZ / 45));
+    const epsM2s3 = +Math.max(1e-6, Math.pow(cMu, 0.75) * Math.pow(tkeM2s2, 1.5) / lMixM).toFixed(6);
+    const pHpa = pressureAt(zz);
+    const tC = tempAt(zz);
+    const tdC = dewAt(zz);
+    const thetaK = +((tC + 273.15) * Math.pow(1000 / Math.max(10, pHpa), 0.2854)).toFixed(2);
+    const rhoKgm3 = +airDensityAt(zz).toFixed(4);
+    const edHpa = 6.112 * Math.exp((17.67 * tdC) / (tdC + 243.5));
+    const qvKgkg = +Math.max(0, (0.622 * edHpa) / Math.max(10, pHpa - 0.378 * edHpa)).toFixed(6);
+    return {
+      zKm: zz,
+      zM: Math.round(zz * 1000),
+      speedMs: +speedMs.toFixed(3),
+      dirDeg: +dirDeg.toFixed(1),
+      uMs,
+      vMs,
+      wUpdraftMs,
+      tkeM2s2,
+      epsM2s3,
+      thetaK,
+      rhoKgm3,
+      qvKgkg,
+    };
+  }
   function freezingLevel() {
     const T0 = surfaceTempEff();
     if (STATE.lapseRate <= 0) return T0 <= 0 ? 0 : 999;
@@ -732,7 +781,7 @@
   global.Atmosphere = {
     APP_NAME, SNAPSHOT_VERSION, CLOUD_META, LAYER_ORDER, STATE, SCHEME_LABELS,
     LWC_MAX, KOSCHMEIER_EPS, RHO_W, MAX_ALT, WIND_SCALE,
-    lclHeight, tempAt, dewAt, dewpointFromRH, pressureAt, airDensityAt, freezingLevel, parcelThermodynamics,
+    lclHeight, tempAt, dewAt, dewpointFromRH, pressureAt, airDensityAt, windProfileAt, freezingLevel, parcelThermodynamics,
     esWater, esIce, wbfVaporDiff, operativeDropConc,
     iceFractionAt, seedingPlumeAt, seedingDepletionAt, seedingIceBoostAt,
     effectiveLayers, sampleFields,

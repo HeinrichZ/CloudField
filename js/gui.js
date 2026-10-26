@@ -692,6 +692,10 @@
     row.appendChild(btn(I18N.t('ex.yaml'), () => { curFile = 'cloudlab_experiment.yaml'; ta.value = global.Exporter.toExperimentYAML(); }));
     row.appendChild(btn(I18N.t('ex.profCsv'), () => { curFile = 'CloudField_profile.csv'; ta.value = global.Exporter.toProfileCSV(0); }));
     row.appendChild(btn(I18N.t('ex.schCsv'), () => { curFile = 'CloudField_schemes.csv'; ta.value = global.Exporter.toSchemeCSV(); }));
+    row.appendChild(btn('MATLAB / Simulink (.m)', () => { curFile = 'CloudField_data.m'; ta.value = global.Exporter.toMATLABScript(0); }));
+    row.appendChild(btn('OpenFOAM 边界 (ABLConditions)', () => { curFile = 'ABLConditions.foam'; ta.value = global.Exporter.toOpenFOAM(0); }));
+    row.appendChild(btn('ANSYS Fluent / FENSAP (.prof)', () => { curFile = 'CloudField_inlet.prof'; ta.value = global.Exporter.toFluentProfile(0); }));
+    row.appendChild(btn('ParaView / Tecplot 3D (.vtk)', () => { curFile = 'CloudField_volume.vtk'; ta.value = global.Exporter.toVTK3D(); }));
     row.appendChild(btn(I18N.t('ex.copy'), () => { if (navigator.clipboard) navigator.clipboard.writeText(ta.value); }));
     row.appendChild(btn('⬇ ' + I18N.t('tb.export'), () => {
       if (!ta.value) { curFile = 'icon_microphysics.nml'; ta.value = global.Exporter.toICONNamelist(); }

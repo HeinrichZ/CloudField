@@ -125,6 +125,80 @@
     return { maxIndex: maxIdx, worstAltKm: worstAlt, maxSlwcGm3: maxSlwc, severity: worstSev, sldRisk: anySld, warmNose };
   }
 
+  // ANSYS FENSAP-ICE / NASA LEWICE 7-Bin Langmuir 多分档液滴谱、无量纲惯性参数 K0、驻点收集效率 β0 与 Messinger 冻结分数诊断
+  function langmuirDropletSpectrum(opts) {
+    opts = opts || {};
+    const ic = icingDiagnostics(opts.time || 0);
+    const zKm = opts.zKm != null ? +opts.zKm : (ic.worstAltKm > 0 ? ic.worstAltKm : (S.sliceAlt || 1.0));
+    const airspeedMs = Math.max(15, opts.airspeedMs != null ? +opts.airspeedMs : 85.0);
+    const chordLeDiamM = Math.max(0.008, opts.leadingEdgeDiamM != null ? +opts.leadingEdgeDiamM : 0.12);
+    const layers = A.effectiveLayers();
+    const wind = { x: S.windSpeed, dir: S.windDir };
+    const d = detailedAt(0, 0, zKm, layers, wind, opts.time || 0);
+    const veff = currentVeff();
+    const reUm = Math.max(2, d.reUm || A.operativeRe(d.lwc));
+    // 中值体积直径 MVD (µm)：由有效半径 r_e 与有效方差 ν_eff 换算
+    const mvdUm = +(2.0 * reUm * (1.0 + 1.15 * veff)).toFixed(2);
+    // 经典 Langmuir-D 7 分档质量权重与随 ν_eff 展宽的粒径比 d_i / MVD
+    const weights = [0.03, 0.08, 0.15, 0.48, 0.15, 0.08, 0.03];
+    const baseRatios = [0.31, 0.52, 0.71, 1.00, 1.37, 1.74, 2.22];
+    const spreadScale = Math.max(0.6, Math.min(1.6, 0.75 + 2.5 * veff));
+    const rhoAir = A.airDensityAt ? A.airDensityAt(zKm) : 1.05;
+    const muAir = 1.716e-5 * Math.pow((d.temp + 273.15) / 273.15, 1.5) * (384.15 / (d.temp + 384.15));
+    const bins = [];
+    let beta0Weighted = 0;
+    for (let i = 0; i < 7; i++) {
+      const ratio = +(1.0 + (baseRatios[i] - 1.0) * spreadScale).toFixed(3);
+      const diamUm = +(mvdUm * ratio).toFixed(2);
+      const diamM = diamUm * 1e-6;
+      const reDrop = (rhoAir * airspeedMs * diamM) / muAir;
+      const kStk = (1000 * diamM * diamM * airspeedMs) / (18 * muAir * chordLeDiamM);
+      // Langmuir & Blodgett 修正常数 K0 与圆柱/机翼前缘驻点收集效率 β0
+      const lambdaRatio = reDrop > 0.1 ? 1 / (1 + 0.125 * Math.pow(reDrop, 0.687)) : 1.0;
+      const k0 = 0.125 + Math.max(0, kStk - 0.125) * lambdaRatio;
+      const beta0Bin = k0 > 0.125 ? (1.40 * Math.pow(k0 - 0.125, 0.84)) / (1 + 1.40 * Math.pow(k0 - 0.125, 0.84)) : 0;
+      beta0Weighted += weights[i] * beta0Bin;
+      bins.push({
+        bin: i + 1,
+        weight: weights[i],
+        ratioToMvd: ratio,
+        diamUm,
+        stokesK0: +k0.toFixed(4),
+        collectionEffBeta0: +beta0Bin.toFixed(4),
+      });
+    }
+    const fw = d.frac ? (d.frac.water || 0) : 1;
+    const slwcGm3 = +(d.lwc * fw).toFixed(4);
+    // Messinger (1953) 驻点能量平衡冻结分数 f_freeze 与冰型（霜冰 RIME / 混合冰 MIXED / 明冰 GLAZE）
+    let freezeFrac = 0, iceRegime = 'NONE';
+    if (d.temp < 0 && slwcGm3 >= 0.01) {
+      const impingeFluxKgm2s = (slwcGm3 * 1e-3) * airspeedMs * Math.max(0.05, beta0Weighted);
+      const aeroHeatingC = (airspeedMs * airspeedMs) / (2 * 1004) * 0.85;
+      const tSurfEq = d.temp + aeroHeatingC;
+      if (tSurfEq < 0) {
+        const qConvLoss = 115 * (-tSurfEq);
+        const qLatent = impingeFluxKgm2s * 3.34e5;
+        freezeFrac = +Math.min(1.0, Math.max(0.05, qConvLoss / Math.max(1.0, qLatent))).toFixed(3);
+      }
+      iceRegime = freezeFrac >= 0.85 ? 'RIME' : (freezeFrac >= 0.35 ? 'MIXED' : (freezeFrac > 0 ? 'GLAZE' : 'RUNBACK'));
+    }
+    return {
+      zKm: +zKm.toFixed(2),
+      tempC: +d.temp.toFixed(2),
+      pressureHpa: +d.pressure.toFixed(1),
+      rhoKgm3: +rhoAir.toFixed(4),
+      airspeedMs,
+      leadingEdgeDiamM: chordLeDiamM,
+      reUm: +reUm.toFixed(2),
+      mvdUm,
+      slwcGm3,
+      stagnationBeta0: +beta0Weighted.toFixed(4),
+      freezingFraction: freezeFrac,
+      iceRegime,
+      bins,
+    };
+  }
+
   // 当前粒子谱有效方差 ν_eff（来自 Spectrum 模块或 STATE.spectrum）
   function currentVeff() {
     if (global.Spectrum && typeof global.Spectrum.moments === 'function') {
@@ -784,7 +858,7 @@
 
   global.Physics = {
     PHASE_EXT, PHASE_OMEGA, PHASE_ORDER,
-    phaseFractions, aerosolBetaAt, precipExtFromRate, icingIndexAt, icingDiagnostics,
+    phaseFractions, aerosolBetaAt, precipExtFromRate, icingIndexAt, icingDiagnostics, langmuirDropletSpectrum,
     currentVeff, detailedAt, visibilityDetailed,
     worstVisibilityDetailed, seedingDiagnostics, optimalSeedingPoint,
     approachSlantProfile, turbulenceAndShearDiagnostics,

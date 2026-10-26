@@ -157,6 +157,10 @@ r_e 的单一来源由 `micro.reMode` 决定：`derived`（默认）用 `effRadi
   - 输出国际民航标准湍流涡旋耗散率 $\text{EDR}$（$\text{m}^{2/3}\text{s}^{-1}$）与 $0\text{–}500\text{ m}$ 低空垂直风切变（$\text{kt/100ft}$）。
 - **低空经济（UAV / eVTOL / 播云无人机）适航与光电吊舱（EO/IR）透过率评估**：针对 $0\text{–}1000\text{ m AGL}$ 低空作业走廊，计算无除冰碳纤维旋翼积冰风险（敏感度为运输机机翼的 $2.2$ 倍）、锂电池低温可用容量折减率（$<15^\circ\text{C}$ 线性衰减，$-10^\circ\text{C}$ 约折减 $40\%$）、$1\text{ km}$ 斜距可见光（$550\text{ nm}$）与短波红外（$1550\text{ nm}$）Beer–Lambert 透过率，综合给出 `GO / CAUTION / NO-GO` 适航判据。
 - **高空巡航（FL260–FL400）Schmidt–Appleman 飞机凝结尾迹（Contrail）与静力稳定度判据**：按航空煤油（Jet-A1，$\text{EI}_{\text{H}_2\text{O}}=1.25\ \text{kg/kg}$，$Q=43.2\ \text{MJ/kg}$，推进效率 $\eta=0.35$）计算排气混合斜率 $G = \frac{\text{EI}_{\text{H}_2\text{O}} c_p p}{\varepsilon Q (1-\eta)}$（$\text{Pa/K}$）与 Schumann (1996) 临界温度 $T_{\text{LM}}$；当环境温度 $T_{\text{amb}} \le T_{\text{LM}}$ 且环境对冰相对湿度 $\text{RHi} \ge 100\%$ 时判定形成持续性人造卷云尾迹（Persistent Contrail Cirrus），同时输出巡航层位温 $\theta$ 与 Brunt–Väisälä 频率 $N_{\text{BV}} = \sqrt{\frac{g}{\theta}\frac{\partial \theta}{\partial z}}$。
+- **MATLAB / Simulink 与主流 CFD / 结冰求解器（OpenFOAM / ANSYS Fluent / FENSAP-ICE / ParaView VTK）接口**：
+  - **边界层风切变与 $k\text{–}\varepsilon$ 湍流廓线（`Atmosphere.windProfileAt`）**：结合 Hellmann 边界层幂律切变（$\alpha=0.16$）、北半球 Ekman 螺线顺转角 $\Delta\phi(z) = 20^\circ(1 - e^{-z/0.65\text{km}})$、摩擦速度 $u_*$ 与混合长 $l_m(z) = \frac{\kappa z}{1 + \kappa z/45}$，给出三维风矢量 $(u, v, w)$、湍流动能 $k(z)$、湍流耗散率 $\varepsilon(z) = C_\mu^{3/4} k^{3/2} / l_m$、位温 $\theta(z)$、比湿 $q_v(z)$ 与云水混合比 $q_c(z)$。
+  - **FENSAP-ICE / NASA LEWICE 7-Bin Langmuir 液滴谱与前缘收集效率（`Physics.langmuirDropletSpectrum`）**：由有效半径 $r_e$ 与谱有效方差 $\nu_{\text{eff}}$ 计算中值体积直径 $\text{MVD} = 2 r_e (1 + 1.15\nu_{\text{eff}})$、Langmuir-D 7 档液滴分布（权重 $0.03, 0.08, 0.15, 0.48, 0.15, 0.08, 0.03$）、修正惯性参数 $K_0$、前缘驻点收集效率 $\beta_0 = \frac{1.40(K_0 - 1/8)^{0.84}}{1 + 1.40(K_0 - 1/8)^{0.84}}$ 及 Messinger (1953) 冻结分数 $f_{\text{freeze}}$。
+  - **原生格式导出**：提供 MATLAB `.m` 工作区结构体脚本（`toMATLABScript`）与 `sdk/cloudfield_sdk.m`、OpenFOAM `ABLConditions` 入口字典（`toOpenFOAM`）、ANSYS Fluent `.prof` 边界廓线（`toFluentProfile`）及 ParaView / Tecplot 三维结构化网格 `.vtk`（`toVTK3D`）。
 
 ## 八、坐标系、机场表、高原 QFE/QNH、密度高度（DA）与低温高度表修正
 

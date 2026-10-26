@@ -28,7 +28,10 @@ CloudField 将三维实时体积云渲染与云微物理参数化、遥感观测
   - **飞机积冰（SLD）、颠簸耗散率（EDR）与低空风切变（LLWS）风险评估**：根据过冷水含量（SLWC）、温度效率窗（$0 \sim -38^\circ\text{C}$）与有效滴径 $r_e$ 计算飞机积冰严重度与 SLD 告警；根据对流强度、积雨云含水量与边界层切变输出国际民航标准**湍流涡旋耗散率 $\text{EDR}$（$\text{m}^{2/3}\text{s}^{-1}$）**与进近走廊 **$0\text{–}500\text{ m}$ 低空垂直风切变（$\text{kt/100ft}$）及微下击暴流告警**。
   - **低空经济（UAV / eVTOL / 播云无人机）适航与光电吊舱（EO/IR）透过率评估**：针对 $0\text{–}1000\text{ m AGL}$ 低空空域（`uavLowAltitudeAssessment`），综合评估无除冰碳纤维旋翼积冰指数、锂电池低温可用容量折减率（$\%$）、抗风与湍流边界、$1\text{ km}$ 斜距可见光（$550\text{ nm}$）与短波红外（$1550\text{ nm}$）光电吊舱大气透过率，输出 `GO / CAUTION / NO-GO` 适航放行状态与受限因子。
   - **高空巡航（FL260–FL400）飞机凝结尾迹（Contrail）与静力稳定度评估**：按 **ICAO / WMO Schmidt–Appleman 判据**（`cruiseContrailAssessment`）计算巡航高度层混合斜率 $G$（$\text{Pa/K}$）、凝结尾迹临界生成温度 $T_{\text{LM}}$、对冰相对湿度 $\text{RHi}$ 与冰过饱和区（ISSR）持续性卷云尾迹生成判据，同时输出巡航层位温 $\theta$ 与 Brunt–Väisälä 静力稳定度频率 $N_{\text{BV}}$。
-- **典型教学与运行场景预设及模式数据导出**：内置 8 类典型预设场景（辐射雾 `fog`、层积云 `stratus`、晴空积云 `cumulus`、高空卷云 `cirrus`、过冷云催化 `cloudlab`、强对流积雨云 `cbstorm`、**冻雨暖鼻与严重积冰 `fzra`**、**高原高温高密 `plateau`**）；支持一键导出标准 METAR、IWXXM XML、BUFR/GRIB JSON、ICON-LES Fortran Namelist（`.nml`）、CLOUDLAB 实验配置（`.yaml`）、57 层完整垂直廓线 CSV（`toProfileCSV`）、三方案微物理响应曲线 CSV（`toSchemeCSV`）及自包含 HTML 诊断报告，并提供命令行批处理与 Python SDK。
+- **MATLAB / Simulink、主流 CFD 求解器与结冰软件原生兼容**：
+  - **大气边界层（ABL）风廓线与 $k\text{–}\varepsilon$ 湍流入口剖面（`Atmosphere.windProfileAt`）**：生成随高度变化的 Hellmann 幂律风切变、北半球 Ekman 螺线风向顺转（$0 \to +20^\circ$）、速度分量 $(u, v, w)$、湍流动能 $\text{TKE } k(z)$（$\text{m}^2/\text{s}^2$）、湍流耗散率 $\varepsilon(z)$（$\text{m}^2/\text{s}^3$）、空气密度 $\rho(z)$、位温 $\theta(z)$ 与比湿 $q_v(z)$。
+  - **FENSAP-ICE / NASA LEWICE 7-Bin Langmuir 多分档液滴谱与收集效率（`Physics.langmuirDropletSpectrum`）**：计算中值体积直径 $\text{MVD}$、Langmuir 7 档粒径权重、无量纲惯性参数 $K_0$、机翼/旋翼前缘驻点收集效率 $\beta_0$，以及基于 Messinger (1953) 热平衡的冻结分数 $f_{\text{freeze}}$ 与冰型（霜冰 `RIME` / 混合冰 `MIXED` / 明冰 `GLAZE`）。
+  - **多生态工程与科研一键导出**：支持直接导出 **MATLAB / Simulink / Aerospace Blockset 原生工作区脚本（`.m`）**、**OpenFOAM 2.0 `ABLConditions` 边界层入口字典（`.foam`）**、**ANSYS Fluent S-Expression 边界廓线与 FENSAP-ICE 液滴谱（`.prof`）**、**ParaView / Tecplot / VisIt 三维结构化网格标量与风矢量场（`.vtk`）**、**ICON-LES / WRF Fortran Namelist（`.nml`）**、**CLOUDLAB 实验清单（`.yaml`）**、**57 层完整垂直廓线 CSV**，并同时提供 **Python SDK（`sdk/cloudfield_sdk.py`）** 与 **MATLAB / GNU Octave SDK（`sdk/cloudfield_sdk.m`）**。
 
 ---
 
@@ -88,9 +91,10 @@ CloudField/
 │   ├── report.js           # 自包含 HTML 诊断报告 / 截图标注 / 分享链接（URL 状态编码）
 │   └── help.js             # 参数释义卡片 + 典型天气场景预设
 ├── tools/
-│   └── cli.js              # Node 命令行批处理工具（支持导出 JSON / CSV / Namelist / YAML）
+│   └── cli.js              # Node 命令行批处理工具（支持导出 CSV / JSON / MATLAB / OpenFOAM / Fluent / VTK / Namelist / YAML）
 ├── sdk/
-│   └── cloudfield_sdk.py   # Python SDK：封装 CLI 批处理与多格式解析
+│   ├── cloudfield_sdk.py   # Python SDK：封装 CLI 批处理与科研/CFD 多格式解析
+│   └── cloudfield_sdk.m    # MATLAB / GNU Octave SDK：一键导入工作区结构体、1D 查找表、二维切片与批量计算
 ├── bridge-adapter/         # 独立 IPC 服务端进程（Node，纯内置模块）
 │   ├── server.js
 │   ├── schema.js

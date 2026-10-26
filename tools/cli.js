@@ -70,13 +70,20 @@ function main() {
     A.STATE.seeding.inpConc = o.seedInp;
   }
   const Exporter = sandbox.window.Exporter;
-  if (o.format === 'nml' || o.format === 'yaml' || o.format === 'metar' || o.format === 'iwxxm' || o.format === 'profile-csv' || o.format === 'scheme-csv') {
-    const text = o.format === 'nml' ? Exporter.toICONNamelist()
-      : o.format === 'yaml' ? Exporter.toExperimentYAML()
-      : o.format === 'metar' ? Exporter.toMETAR()
-      : o.format === 'iwxxm' ? Exporter.toIWXXM()
-      : o.format === 'profile-csv' ? Exporter.toProfileCSV(0)
-      : Exporter.toSchemeCSV();
+  const singleFormats = {
+    nml: () => Exporter.toICONNamelist(),
+    yaml: () => Exporter.toExperimentYAML(),
+    metar: () => Exporter.toMETAR(),
+    iwxxm: () => Exporter.toIWXXM(),
+    'profile-csv': () => Exporter.toProfileCSV(0),
+    'scheme-csv': () => Exporter.toSchemeCSV(),
+    matlab: () => Exporter.toMATLABScript(0),
+    openfoam: () => Exporter.toOpenFOAM(0),
+    fluent: () => Exporter.toFluentProfile(0),
+    vtk: () => Exporter.toVTK3D(),
+  };
+  if (singleFormats[o.format]) {
+    const text = singleFormats[o.format]();
     if (o.out) {
       fs.writeFileSync(o.out, text);
       console.log('已写出 ' + o.format.toUpperCase() + ' -> ' + o.out);

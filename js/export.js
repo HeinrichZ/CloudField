@@ -214,16 +214,17 @@
     ].join('\n');
   }
 
-  // —— 科研级垂直廓线 CSV 导出（0–14 km，Δz = 0.25 km，57 层完整热力与微物理廓线）——
+  // —— 科研级垂直廓线 CSV 导出（0–14 km，Δz = 0.25 km，57 层完整热力、微物理与边界层 CFD 廓线）——
   function toProfileCSV(time) {
     const t = time || 0;
     const layers = A.effectiveLayers();
     const wind = { x: S.windSpeed, dir: S.windDir };
-    const header = 'z_km,p_hPa,T_degC,Td_degC,RH_pct,esw_hPa,esi_hPa,wbf_diff_hPa,LWC_gm3,IWC_gm3,ice_frac,re_um,beta_ext_m1,vis_m';
+    const header = 'z_km,p_hPa,T_degC,Td_degC,RH_pct,esw_hPa,esi_hPa,wbf_diff_hPa,LWC_gm3,IWC_gm3,ice_frac,re_um,beta_ext_m1,vis_m,rho_kgm3,theta_K,qv_kgkg,qc_kgkg,u_ms,v_ms,tke_m2s2,eps_m2s3';
     const lines = [header];
     for (let z = 0; z <= 14.0001; z += 0.25) {
       const zz = Number(z.toFixed(2));
       const d = P.detailedAt(0, 0, zz, layers, wind, t);
+      const wp = A.windProfileAt ? A.windProfileAt(zz) : { rhoKgm3: 1.0, thetaK: 288.15, qvKgkg: 0.005, uMs: S.windSpeed || 0, vMs: 0, tkeM2s2: 0.2, epsM2s3: 0.005 };
       const T = d.temp;
       const Td = d.dew;
       const esw = A.esWater ? A.esWater(T) : 6.112 * Math.exp((17.67 * T) / (T + 243.5));
@@ -234,6 +235,7 @@
       const fi = Math.max(0, 1 - fw);
       const lwcLiq = d.lwc * fw;
       const iwcIce = d.lwc * fi;
+      const qcKgkg = (lwcLiq * 1e-3) / Math.max(0.1, wp.rhoKgm3);
       const vis = A.visibilityFromExt(d.betaExt);
       const visVal = isFinite(vis) ? Math.min(99999, vis) : 99999;
       lines.push([
@@ -251,6 +253,14 @@
         d.reUm.toFixed(2),
         d.betaExt.toExponential(4),
         visVal.toFixed(1),
+        wp.rhoKgm3.toFixed(4),
+        wp.thetaK.toFixed(2),
+        wp.qvKgkg.toExponential(4),
+        qcKgkg.toExponential(4),
+        wp.uMs.toFixed(3),
+        wp.vMs.toFixed(3),
+        wp.tkeM2s2.toFixed(4),
+        wp.epsM2s3.toExponential(4),
       ].join(','));
     }
     return lines.join('\n');
@@ -283,6 +293,284 @@
     return lines.join('\n');
   }
 
+  // —— MATLAB / Simulink / Aerospace Blockset 原生工作区脚本导出 (.m) ——
+  function toMATLABScript(time) {
+    const t = time || 0;
+    const r = readouts();
+    const layers = A.effectiveLayers();
+    const wind = { x: S.windSpeed, dir: S.windDir };
+    const lang = P.langmuirDropletSpectrum ? P.langmuirDropletSpectrum({ time: t }) : null;
+    const zM = [], pPa = [], tK = [], thetaK = [], rhoKgm3 = [], qvKgkg = [], qcKgkg = [];
+    const uMs = [], vMs = [], tke = [], eps = [], lwcGm3 = [], iwcGm3 = [], reUm = [], betaM1 = [], visM = [];
+    for (let z = 0; z <= 14.0001; z += 0.25) {
+      const zz = Number(z.toFixed(2));
+      const d = P.detailedAt(0, 0, zz, layers, wind, t);
+      const wp = A.windProfileAt ? A.windProfileAt(zz) : { rhoKgm3: 1.0, thetaK: 288.15, qvKgkg: 0.005, uMs: S.windSpeed || 0, vMs: 0, tkeM2s2: 0.2, epsM2s3: 0.005 };
+      const fw = d.frac ? (d.frac.water || 0) : 1;
+      const lwcLiq = d.lwc * fw;
+      const iwcIce = d.lwc * Math.max(0, 1 - fw);
+      const vis = A.visibilityFromExt(d.betaExt);
+      zM.push((zz * 1000).toFixed(1));
+      pPa.push((d.pressure * 100).toFixed(1));
+      tK.push((d.temp + 273.15).toFixed(2));
+      thetaK.push(wp.thetaK.toFixed(2));
+      rhoKgm3.push(wp.rhoKgm3.toFixed(4));
+      qvKgkg.push(wp.qvKgkg.toExponential(4));
+      qcKgkg.push(((lwcLiq * 1e-3) / Math.max(0.1, wp.rhoKgm3)).toExponential(4));
+      uMs.push(wp.uMs.toFixed(3));
+      vMs.push(wp.vMs.toFixed(3));
+      tke.push(wp.tkeM2s2.toFixed(4));
+      eps.push(wp.epsM2s3.toExponential(4));
+      lwcGm3.push(lwcLiq.toFixed(4));
+      iwcGm3.push(iwcIce.toFixed(4));
+      reUm.push(d.reUm.toFixed(2));
+      betaM1.push(d.betaExt.toExponential(4));
+      visM.push((isFinite(vis) ? Math.min(99999, vis) : 99999).toFixed(1));
+    }
+    const st = P.fieldStats({ z: S.sliceAlt || 0.3, N: 16, time: t });
+    const xGrid = [];
+    for (let i = 0; i < st.N; i++) xGrid.push((-20 + 40 * i / (st.N - 1)).toFixed(2));
+    const visRows = [];
+    for (let j = 0; j < st.N; j++) {
+      const row = [];
+      for (let i = 0; i < st.N; i++) row.push(st.field[i * st.N + j].toFixed(1));
+      visRows.push(row.join(', '));
+    }
+    return [
+      '% ==========================================================================',
+      '% CloudField MATLAB / Simulink / Aerospace Blockset Workspace Data Script',
+      '% Usage in MATLAB/Octave: run("CloudField_data.m");',
+      '% Provides 1D Lookup Table vectors (cf.profile.*), 2D Slice (cf.slice.*),',
+      '% and FENSAP-ICE / LEWICE 7-bin Langmuir droplet spectrum (cf.langmuir.*).',
+      '% ==========================================================================',
+      'cf = struct();',
+      'cf.meta.app = \'CloudField\';',
+      'cf.meta.scheme = \'' + (S.micro.scheme || 'kessler') + '\';',
+      'cf.meta.slice_alt_km = ' + Number(S.sliceAlt || 0.3).toFixed(2) + ';',
+      'cf.summary.worst_vis_m = ' + (isFinite(r.vis) ? r.vis.toFixed(1) : '99999') + ';',
+      'cf.summary.cloud_cover_pct = ' + r.cover.toFixed(1) + ';',
+      'cf.summary.lwp_gm2 = ' + (r.ops && r.ops.lwp != null ? r.ops.lwp.toFixed(2) : '0') + ';',
+      'cf.summary.iwp_gm2 = ' + (r.ops && r.ops.iwp != null ? r.ops.iwp.toFixed(2) : '0') + ';',
+      'cf.summary.cre_sw_wm2 = ' + (r.ops && r.ops.creSW != null ? r.ops.creSW.toFixed(2) : '0') + ';',
+      'cf.summary.cape_jkg = ' + (r.ops && r.ops.thermo ? r.ops.thermo.capeJkg : 0) + ';',
+      'cf.summary.icing_index = ' + (r.ops && r.ops.icing ? r.ops.icing.maxIndex : 0) + ';',
+      'cf.summary.svr_cat1_dh_m = ' + (r.ops && r.ops.approachSlant ? r.ops.approachSlant.svrAtCat1DhM : 0) + ';',
+      'cf.summary.edr_max = ' + (r.ops && r.ops.turbulence ? r.ops.turbulence.edrMax : 0) + ';',
+      '',
+      '% --- 1D Vertical Profile Column Vectors (57 levels, 0 to 14000 m, Simulink Lookup Ready) ---',
+      'cf.profile.z_m = [' + zM.join('; ') + '];',
+      'cf.profile.p_Pa = [' + pPa.join('; ') + '];',
+      'cf.profile.T_K = [' + tK.join('; ') + '];',
+      'cf.profile.theta_K = [' + thetaK.join('; ') + '];',
+      'cf.profile.rho_kgm3 = [' + rhoKgm3.join('; ') + '];',
+      'cf.profile.qv_kgkg = [' + qvKgkg.join('; ') + '];',
+      'cf.profile.qc_kgkg = [' + qcKgkg.join('; ') + '];',
+      'cf.profile.u_ms = [' + uMs.join('; ') + '];',
+      'cf.profile.v_ms = [' + vMs.join('; ') + '];',
+      'cf.profile.tke_m2s2 = [' + tke.join('; ') + '];',
+      'cf.profile.eps_m2s3 = [' + eps.join('; ') + '];',
+      'cf.profile.LWC_gm3 = [' + lwcGm3.join('; ') + '];',
+      'cf.profile.IWC_gm3 = [' + iwcGm3.join('; ') + '];',
+      'cf.profile.re_um = [' + reUm.join('; ') + '];',
+      'cf.profile.beta_ext_m1 = [' + betaM1.join('; ') + '];',
+      'cf.profile.vis_m = [' + visM.join('; ') + '];',
+      '',
+      '% --- 2D Horizontal Visibility Field (16x16 grid, [-20, 20] km) ---',
+      'cf.slice.x_km = [' + xGrid.join(', ') + '];',
+      'cf.slice.y_km = [' + xGrid.join(', ') + '];',
+      'cf.slice.vis_m = [',
+      '  ' + visRows.join(';\n  '),
+      '];',
+      '',
+      '% --- 7-Bin Langmuir Droplet Spectrum (FENSAP-ICE / NASA LEWICE) ---',
+      'cf.langmuir.mvd_um = ' + (lang ? lang.mvdUm : 16) + ';',
+      'cf.langmuir.stagnation_beta0 = ' + (lang ? lang.stagnationBeta0 : 0) + ';',
+      'cf.langmuir.freezing_fraction = ' + (lang ? lang.freezingFraction : 0) + ';',
+      'cf.langmuir.ice_regime = \'' + (lang ? lang.iceRegime : 'NONE') + '\';',
+      'cf.langmuir.weights = [' + (lang ? lang.bins.map(b => b.weight).join(', ') : '0.03, 0.08, 0.15, 0.48, 0.15, 0.08, 0.03') + '];',
+      'cf.langmuir.diam_um = [' + (lang ? lang.bins.map(b => b.diamUm).join(', ') : '5, 8, 11, 16, 22, 28, 35') + '];',
+    ].join('\n');
+  }
+
+  // —— OpenFOAM 大气边界层入口边界字典导出 (FoamFile 2.0, 兼容 atmosphericModels / timeVaryingMappedFixedValue) ——
+  function toOpenFOAM(time) {
+    const t = time || 0;
+    const layers = A.effectiveLayers();
+    const wind = { x: S.windSpeed, dir: S.windDir };
+    const wpRef = A.windProfileAt ? A.windProfileAt(0.01) : { speedMs: S.windSpeed || 5, uMs: S.windSpeed || 5, vMs: 0 };
+    const uMag = Math.max(1e-3, Math.hypot(wpRef.uMs, wpRef.vMs));
+    const rows = [];
+    for (let z = 0; z <= 14.0001; z += 0.25) {
+      const zz = Number(z.toFixed(2));
+      const d = P.detailedAt(0, 0, zz, layers, wind, t);
+      const wp = A.windProfileAt ? A.windProfileAt(zz) : { zM: zz * 1000, uMs: S.windSpeed || 0, vMs: 0, wUpdraftMs: 0, thetaK: 288.15, rhoKgm3: 1.0, tkeM2s2: 0.2, epsM2s3: 0.005, qvKgkg: 0.005 };
+      const fw = d.frac ? (d.frac.water || 0) : 1;
+      const lwcLiq = d.lwc * fw;
+      const qcKgkg = (lwcLiq * 1e-3) / Math.max(0.1, wp.rhoKgm3);
+      rows.push('    (' + [
+        (zz * 1000).toFixed(1),
+        wp.uMs.toFixed(3),
+        wp.vMs.toFixed(3),
+        wp.wUpdraftMs.toFixed(3),
+        (d.temp + 273.15).toFixed(2),
+        (d.pressure * 100).toFixed(1),
+        wp.tkeM2s2.toFixed(4),
+        wp.epsM2s3.toExponential(4),
+        wp.qvKgkg.toExponential(4),
+        qcKgkg.toExponential(4),
+        lwcLiq.toFixed(4),
+      ].join(' ') + ')');
+    }
+    return [
+      '/*--------------------------------*- C++ -*----------------------------------*\\',
+      '| =========                 |                                                 |',
+      '| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |',
+      '|  \\\\    /   O peration     | Generated by CloudField Atmospheric Sandbox     |',
+      '|   \\\\  /    A nd           | Compatible with buoyantPimpleFoam / ABLInflow   |',
+      '|    \\\\/     M anipulation  |                                                 |',
+      '\\*---------------------------------------------------------------------------*/',
+      'FoamFile',
+      '{',
+      '    version     2.0;',
+      '    format      ascii;',
+      '    class       dictionary;',
+      '    location    "constant/boundaryData/inlet";',
+      '    object      ABLConditions;',
+      '}',
+      '// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //',
+      '',
+      'Uref            ' + Number(S.windSpeed || 0).toFixed(2) + ';',
+      'Href            10.0;',
+      'z0              uniform 0.05;',
+      'zGround         uniform 0.0;',
+      'flowDir         (' + (wpRef.uMs / uMag).toFixed(4) + ' ' + (wpRef.vMs / uMag).toFixed(4) + ' 0);',
+      '',
+      '// Columns: (z_m Ux_ms Uy_ms Uz_ms T_K p_Pa k_m2s2 epsilon_m2s3 qv_kgkg qc_kgkg LWC_gm3)',
+      'profileTable',
+      '(',
+      rows.join('\n'),
+      ');',
+      '',
+      '// ************************************************************************* //',
+    ].join('\n');
+  }
+
+  // —— ANSYS Fluent 入口廓线 (.prof) 与 FENSAP-ICE / NASA LEWICE 7-Bin Langmuir 多分档液滴谱导出 ——
+  function toFluentProfile(time) {
+    const t = time || 0;
+    const layers = A.effectiveLayers();
+    const wind = { x: S.windSpeed, dir: S.windDir };
+    const lang = P.langmuirDropletSpectrum ? P.langmuirDropletSpectrum({ time: t }) : null;
+    const zArr = [], uxArr = [], uyArr = [], uzArr = [], tArr = [], kArr = [], epsArr = [], qvArr = [], qcArr = [], lwcArr = [], mvdArr = [];
+    const veff = P.currentVeff ? P.currentVeff() : 0.10;
+    for (let z = 0; z <= 14.0001; z += 0.25) {
+      const zz = Number(z.toFixed(2));
+      const d = P.detailedAt(0, 0, zz, layers, wind, t);
+      const wp = A.windProfileAt ? A.windProfileAt(zz) : { uMs: S.windSpeed || 0, vMs: 0, wUpdraftMs: 0, rhoKgm3: 1.0, tkeM2s2: 0.2, epsM2s3: 0.005, qvKgkg: 0.005 };
+      const fw = d.frac ? (d.frac.water || 0) : 1;
+      const lwcLiq = d.lwc * fw;
+      const qcKgkg = (lwcLiq * 1e-3) / Math.max(0.1, wp.rhoKgm3);
+      const mvd = 2.0 * d.reUm * (1.0 + 1.15 * veff);
+      zArr.push((zz * 1000).toFixed(1));
+      uxArr.push(wp.uMs.toFixed(3));
+      uyArr.push(wp.vMs.toFixed(3));
+      uzArr.push(wp.wUpdraftMs.toFixed(3));
+      tArr.push((d.temp + 273.15).toFixed(2));
+      kArr.push(wp.tkeM2s2.toFixed(4));
+      epsArr.push(wp.epsM2s3.toExponential(4));
+      qvArr.push(wp.qvKgkg.toExponential(4));
+      qcArr.push(qcKgkg.toExponential(4));
+      lwcArr.push((lwcLiq * 1e-3).toExponential(4));
+      mvdArr.push(mvd.toFixed(2));
+    }
+    const N = zArr.length;
+    const langLines = lang ? lang.bins.map(b =>
+      ';   Bin ' + b.bin + ': weight=' + b.weight.toFixed(2) + '  d=' + b.diamUm.toFixed(2) + ' um  K0=' + b.stokesK0.toFixed(4) + '  beta0=' + b.collectionEffBeta0.toFixed(4)
+    ) : [];
+    return [
+      '; ==========================================================================',
+      '; ANSYS Fluent Boundary Profile (.prof) & FENSAP-ICE / LEWICE Icing Inflow',
+      '; Import in Fluent: File -> Read -> Profile... -> select "cloudfield-abl-inlet"',
+      '; Reference Icing Alt = ' + (lang ? lang.zKm : 1.0) + ' km, T_inf = ' + (lang ? lang.tempC : 0) + ' degC, LWC = ' + (lang ? lang.slwcGm3 : 0) + ' g/m3',
+      '; MVD = ' + (lang ? lang.mvdUm : 16) + ' um, Stagnation beta0 = ' + (lang ? lang.stagnationBeta0 : 0) + ', Ice Regime = ' + (lang ? lang.iceRegime : 'NONE') + ' (f=' + (lang ? lang.freezingFraction : 0) + ')',
+      '; --- FENSAP-ICE / NASA LEWICE 7-Bin Langmuir Distribution ---',
+      langLines.join('\n'),
+      '; ==========================================================================',
+      '((cloudfield-abl-inlet point ' + N + ')',
+      '(z ' + zArr.join(' ') + ')',
+      '(x-velocity ' + uxArr.join(' ') + ')',
+      '(y-velocity ' + uyArr.join(' ') + ')',
+      '(z-velocity ' + uzArr.join(' ') + ')',
+      '(temperature ' + tArr.join(' ') + ')',
+      '(turbulent-kinetic-energy ' + kArr.join(' ') + ')',
+      '(turbulent-dissipation-rate ' + epsArr.join(' ') + ')',
+      '(h2o-vapor-mass-frac ' + qvArr.join(' ') + ')',
+      '(cloud-liquid-mass-frac ' + qcArr.join(' ') + ')',
+      '(lwc-kgm3 ' + lwcArr.join(' ') + ')',
+      '(mvd-um ' + mvdArr.join(' ') + ')',
+      ')',
+    ].join('\n');
+  }
+
+  // —— ParaView / Tecplot / VisIt 三维结构化网格 VTK Legacy ASCII 导出 (.vtk) ——
+  function toVTK3D(opts) {
+    opts = opts || {};
+    const nx = opts.nx || 16;
+    const ny = opts.ny || 16;
+    const nz = opts.nz || 15;
+    const halfKm = opts.halfKm || 20;
+    const zMaxKm = opts.zMaxKm || 7.0;
+    const t = opts.time || 0;
+    const layers = A.effectiveLayers();
+    const wind = { x: S.windSpeed, dir: S.windDir };
+    const dxM = (2 * halfKm * 1000) / Math.max(1, nx - 1);
+    const dyM = (2 * halfKm * 1000) / Math.max(1, ny - 1);
+    const dzM = (zMaxKm * 1000) / Math.max(1, nz - 1);
+    const totalPts = nx * ny * nz;
+    const lwcVals = [], betaVals = [], visVals = [], tempVals = [], windVecs = [];
+    for (let k = 0; k < nz; k++) {
+      const zKm = (k / Math.max(1, nz - 1)) * zMaxKm;
+      const wp = A.windProfileAt ? A.windProfileAt(zKm) : { uMs: S.windSpeed || 0, vMs: 0, wUpdraftMs: 0 };
+      for (let j = 0; j < ny; j++) {
+        const yKm = -halfKm + (2 * halfKm) * j / Math.max(1, ny - 1);
+        for (let i = 0; i < nx; i++) {
+          const xKm = -halfKm + (2 * halfKm) * i / Math.max(1, nx - 1);
+          const d = P.detailedAt(xKm, yKm, zKm, layers, wind, t);
+          const vis = A.visibilityFromExt(d.betaExt);
+          lwcVals.push(d.lwc.toFixed(4));
+          betaVals.push(d.betaExt.toExponential(3));
+          visVals.push((isFinite(vis) ? Math.min(99999, vis) : 99999).toFixed(1));
+          tempVals.push(d.temp.toFixed(2));
+          windVecs.push(wp.uMs.toFixed(2) + ' ' + wp.vMs.toFixed(2) + ' ' + wp.wUpdraftMs.toFixed(2));
+        }
+      }
+    }
+    return [
+      '# vtk DataFile Version 3.0',
+      'CloudField 3D Volumetric Cloud, Extinction, Visibility and Wind Field',
+      'ASCII',
+      'DATASET STRUCTURED_POINTS',
+      'DIMENSIONS ' + nx + ' ' + ny + ' ' + nz,
+      'ORIGIN ' + (-halfKm * 1000).toFixed(1) + ' ' + (-halfKm * 1000).toFixed(1) + ' 0.0',
+      'SPACING ' + dxM.toFixed(1) + ' ' + dyM.toFixed(1) + ' ' + dzM.toFixed(1),
+      'POINT_DATA ' + totalPts,
+      'SCALARS LWC_gm3 float 1',
+      'LOOKUP_TABLE default',
+      lwcVals.join('\n'),
+      'SCALARS beta_ext_m1 float 1',
+      'LOOKUP_TABLE default',
+      betaVals.join('\n'),
+      'SCALARS visibility_m float 1',
+      'LOOKUP_TABLE default',
+      visVals.join('\n'),
+      'SCALARS temperature_C float 1',
+      'LOOKUP_TABLE default',
+      tempVals.join('\n'),
+      'VECTORS wind_velocity_ms float',
+      windVecs.join('\n'),
+    ].join('\n');
+  }
+
   // —— 推送到业务系统（fetch 桩）——
   function pushTo(endpoint, payload, opts) {
     opts = opts || {};
@@ -296,5 +584,9 @@
     }).then(r => r.ok ? r : Promise.reject(new Error('HTTP ' + r.status)));
   }
 
-  global.Exporter = { toMETAR, toIWXXM, toBUFR, toGRIB, toICONNamelist, toExperimentYAML, toProfileCSV, toSchemeCSV, pushTo, readouts };
+  global.Exporter = {
+    toMETAR, toIWXXM, toBUFR, toGRIB, toICONNamelist, toExperimentYAML,
+    toProfileCSV, toSchemeCSV, toMATLABScript, toOpenFOAM, toFluentProfile, toVTK3D,
+    pushTo, readouts,
+  };
 })(window);

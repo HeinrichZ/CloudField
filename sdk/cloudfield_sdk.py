@@ -84,6 +84,20 @@ class CloudFieldSDK:
             except OSError:
                 pass
 
+    def export_format(self, fmt: str, preset: Optional[str] = None,
+                      scheme: Optional[str] = None, out_file: Optional[str] = None) -> str:
+        """导出单场景科研/CFD/业务格式：
+        支持 fmt = 'matlab' | 'openfoam' | 'fluent' | 'vtk' | 'nml' | 'yaml' | 'profile-csv' | 'scheme-csv' | 'metar' | 'iwxxm'
+        """
+        cmd = [self.node, self.cli, "--format", fmt]
+        if preset:
+            cmd.extend(["--preset", preset])
+        if scheme:
+            cmd.extend(["--scheme", scheme])
+        if out_file:
+            cmd.extend(["--out", out_file])
+        return subprocess.check_output(cmd, text=True, encoding="utf-8")
+
     @staticmethod
     def _write_temp(text: str) -> str:
         import tempfile
