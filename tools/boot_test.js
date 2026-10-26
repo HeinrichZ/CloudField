@@ -1240,16 +1240,11 @@ win.Monitor.clearSnapshots();
 ok(byId.get('ts-text') && byId.get('ts-text').value.length > 20 && byId.get('qc-text') && byId.get('qc-text').value.length > 20 && byId.get('ex-out') && byId.get('ex-out').value.length > 10 && byId.get('val-sonde-text') && byId.get('val-sonde-text').value.length > 10,
   '高级诊断面板：时变预报/数据质控/业务输出/验证评估 打开即预填有效初始内容，无空白失灵');
 
-// 18) 分支增强：多源卫星红外/雷达复合图层、鼠标点查探针、曙暮光（朝晚霞/火烧云）辐射传输与跑道低阳进近眩光算子
-win.Help.applyScenario('twilight');
-const tw = win.Physics.twilightOpticsAndGlare({ runwayHdgDeg: 270 });
-ok(tw && tw.glowIndex >= 70 && tw.colorTempK < 3200 && tw.glareIndex >= 40 && tw.slantAirmass > 10,
-  'Physics.twilightOpticsAndGlare 解算曙暮光/朝晚霞指数、斜程大气质量 M(θ_s)、主散射色温与跑道 27 低阳进近眩光风险',
-  `glow=${tw.glowIndex}/100 (${tw.glowGrade}), Tc=${tw.colorTempK}K, M=${tw.slantAirmass}, glare=${tw.glareIndex}/100 (${tw.glareRisk})`);
-const fst = win.Physics.fieldStats({ z: 6.2, N: 16 });
+// 18) 空间场多物理量底图切换（能见度 V / 红外亮温 Tb / 雷达回波 dBZ / LWC / 风矢）与鼠标单点探针
+const fst = win.Physics.fieldStats({ z: 2.2, N: 16 });
 ok(fst.tbField instanceof Float32Array && fst.dbzField instanceof Float32Array && fst.uField instanceof Float32Array && fst.tbField.length === 256,
   'Physics.fieldStats 同时输出水平能见度、10.8µm 红外亮温场 tbField、雷达回波场 dbzField 与水平风矢量场 uField/vField');
-const ptProbe = win.Physics.inspectPointAt(0, 0, 6.2, 0);
+const ptProbe = win.Physics.inspectPointAt(0, 0, 2.2, 0);
 ok(ptProbe && isFinite(ptProbe.tbC) && isFinite(ptProbe.dbz) && isFinite(ptProbe.windSpeedMs),
   'Physics.inspectPointAt 单点探针实时返回 (x, y, z) 亮温 Tb、雷达回波 dBZ、LWC、能见度与风速',
   `Tb=${ptProbe.tbC}°C, Z=${ptProbe.dbz}dBZ, V=${ptProbe.visM}m, wind=${ptProbe.windSpeedMs}m/s`);

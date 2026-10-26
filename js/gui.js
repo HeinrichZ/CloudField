@@ -719,10 +719,6 @@
           rows.push(card(I18N.t('op.radar'), o.radar.dBZ.toFixed(1) + ' dBZ'));
           rows.push(card('机载 WXR (X波段)', o.radar.dBZXBand.toFixed(1) + ' dBZ · ' + o.radar.wxrColor + (o.radar.pacShadowAlert ? ' [PAC雨衰告警]' : '')));
         }
-        if (o.twilight) {
-          rows.push(card('🌅 朝晚霞指数 / 色温', o.twilight.glowIndex + '/100 (' + o.twilight.glowGrade + ') · ' + o.twilight.colorTempK + 'K · 幕布 ' + o.twilight.bestCanvasAltKm + 'km'));
-          rows.push(card('☀️ 跑道低太阳角进近眩光', o.twilight.glareRisk + ' (' + o.twilight.glareIndex + '/100 · Δψ=' + o.twilight.azimuthDiffDeg + '° · M=' + o.twilight.slantAirmass + ')'));
-        }
         if (o.turbulence) rows.push(card('湍流 EDR / 低空风切变', o.turbulence.edrMax.toFixed(2) + ' (' + o.turbulence.edrSeverity + ') · ' + o.turbulence.llwsKtPer100Ft + ' kt/100ft'));
         if (o.thermo) {
           rows.push(card('CAPE / CIN (虚温修正)', o.thermo.capeJkg + ' / ' + o.thermo.cinJkg + ' J/kg · LI ' + o.thermo.liftedIndex));
@@ -1027,7 +1023,6 @@
       ['cbstorm', 'Cb Storm'],
       ['fzra', I18N.t('help.fzra')],
       ['plateau', I18N.t('help.plateau')],
-      ['twilight', I18N.t('help.twilight')],
     ].forEach(([k, lbl]) => {
       row.appendChild(btn(lbl, () => {
         if (global.Help) global.Help.applyScenario(k);

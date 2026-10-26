@@ -630,98 +630,6 @@
     };
   }
 
-  // 大气光学曙暮光（朝晚霞/火烧云）辐射传输评分与民航低太阳角跑道进近眩光风险算子
-  function twilightOpticsAndGlare(opts) {
-    opts = opts || {};
-    const sunElev = S.sunElev != null ? +S.sunElev : 35;
-    const sunAz = S.sunAz != null ? +S.sunAz : 220;
-    const runwayHdgDeg = opts.runwayHdgDeg != null ? +opts.runwayHdgDeg : 270;
-    const layers = A.effectiveLayers();
-
-    // 1. 寻找最佳中高云受光幕布层 (z >= 2.2 km) 与低云地平线遮挡因子 (z < 2.2 km)
-    let bestCanvasAltKm = 6.5, canvasScore = 0, lowCloudBlock = 0;
-    for (let i = 0; i < layers.length; i++) {
-      const L = layers[i];
-      const cov = L.coverage || 0, den = L.density || 0;
-      if (cov <= 0.02 || den <= 0.02) continue;
-      const zMid = 0.5 * (L.base + L.top);
-      if (zMid >= 2.2) {
-        const optCov = cov <= 0.75 ? (cov / 0.65) : Math.max(0.35, 1 - (cov - 0.75) * 1.8);
-        const layerQuality = Math.min(1, optCov) * Math.min(1, 0.4 + 0.8 * den) * (zMid >= 5.0 ? 1.12 : 0.95);
-        if (layerQuality > canvasScore) {
-          canvasScore = Math.min(1, layerQuality);
-          bestCanvasAltKm = +L.base.toFixed(1);
-        }
-      } else {
-        lowCloudBlock = Math.max(lowCloudBlock, Math.pow(cov, 1.35) * Math.min(1, den * 1.1));
-      }
-    }
-
-    // 2. Kasten & Young (1989) 球面大气斜程光学大气质量 M(θ_s)，含云高地平线俯角修正 α_dip ≈ 1.01°·√z_km
-    const dipAllowanceDeg = 1.01 * Math.sqrt(Math.max(0.5, bestCanvasAltKm));
-    const effElevDeg = sunElev + 0.65 * dipAllowanceDeg;
-    const clampedElev = Math.max(0.3, Math.min(89.9, effElevDeg));
-    const sinEl = Math.sin(clampedElev * Math.PI / 180);
-    const slantAirmass = +(1 / (sinEl + 0.50572 * Math.pow(clampedElev + 6.07995, -1.6364))).toFixed(2);
-
-    // 3. 瑞利散射 (λ^-4.08) + 气溶胶米氏消光 (Ångström α=1.3) 双波段 (650nm 红光 vs 450nm 蓝光) 斜程透射率
-    const tauAer550 = (S.aerosol && S.aerosol.on) ? Math.max(0.01, S.aerosol.beta0 * (S.aerosol.scaleH * 1000)) : 0.06;
-    const tauR650 = 0.048, tauR450 = 0.225;
-    const tauA650 = tauAer550 * Math.pow(550 / 650, 1.3);
-    const tauA450 = tauAer550 * Math.pow(550 / 450, 1.3);
-    const transRed = Math.exp(-Math.min(38, slantAirmass * (0.42 * tauR650 + 0.65 * tauA650)));
-    const transBlue = Math.exp(-Math.min(38, slantAirmass * (0.42 * tauR450 + 0.65 * tauA450)));
-    const reddening = transRed * Math.max(0, 1 - transBlue / Math.max(1e-4, transRed));
-
-    // 4. 太阳高度角窗口函数：太阳高度在 -4° ~ +10° 时斜程瑞利散射红化最显著
-    let elevWindow = 0;
-    if (sunElev >= -5.5 && sunElev <= 18) {
-      const dist = Math.abs(sunElev - 1.8);
-      elevWindow = Math.exp(-(dist * dist) / (2 * 5.2 * 5.2));
-    } else if (sunElev > 18) {
-      elevWindow = Math.max(0.04, 0.22 * Math.exp(-(sunElev - 18) / 15));
-    }
-
-    // 5. 综合朝晚霞/火烧云质量指数 (0–100) 与色温 (1850K–6200K)
-    // 斜程瑞利+气溶胶红化项 T_R·(1 - T_B/T_R) 的理论峰值约 0.36（在 M≈12–16 处达到极值），按峰值归一
-    const normRed = Math.min(1.08, reddening / 0.35);
-    const unblocked = Math.max(0.08, 1 - 0.82 * lowCloudBlock);
-    const rawGlow = 100 * elevWindow * normRed * (0.18 + 0.82 * canvasScore) * unblocked;
-    const glowIndex = Math.max(0, Math.min(100, Math.round(rawGlow)));
-    const glowGrade = glowIndex >= 75 ? 'SPECTACULAR' : (glowIndex >= 50 ? 'GOOD' : (glowIndex >= 25 ? 'FAIR' : 'POOR'));
-    const colorTempK = Math.round(6200 - 4250 * Math.min(1, elevWindow * normRed));
-    const dominantHueHex = colorTempK < 2400 ? '#ff4d2e' : (colorTempK < 3300 ? '#ff8533' : (colorTempK < 4500 ? '#ffd166' : '#8ab4f8'));
-
-    // 6. 民航跑道方向低太阳角进近眩光风险 (Sun-Glare Hazard on Final Approach)
-    const dAz = Math.abs(((sunAz - runwayHdgDeg + 540) % 360) - 180);
-    const dAzRecip = Math.abs(((sunAz - ((runwayHdgDeg + 180) % 360) + 540) % 360) - 180);
-    const minAzDiff = +Math.min(dAz, dAzRecip).toFixed(1);
-    let glareIndex = 0;
-    if (sunElev >= -0.5 && sunElev <= 20 && minAzDiff <= 35) {
-      const elFactor = Math.exp(-Math.pow(sunElev - 4.5, 2) / (2 * 6.5 * 6.5));
-      const azFactor = Math.exp(-Math.pow(minAzDiff, 2) / (2 * 16 * 16));
-      const mieForwardBoost = Math.min(1.35, 0.75 + 0.85 * Math.min(0.6, tauAer550 + 0.25 * lowCloudBlock));
-      const thickOvercastAtten = lowCloudBlock > 0.82 ? 0.25 : (1 - 0.55 * lowCloudBlock);
-      glareIndex = Math.max(0, Math.min(100, Math.round(100 * elFactor * azFactor * mieForwardBoost * thickOvercastAtten)));
-    }
-    const glareRisk = glareIndex >= 65 ? 'SEVERE' : (glareIndex >= 35 ? 'MODERATE' : 'LOW');
-    return {
-      glowIndex,
-      glowGrade,
-      colorTempK,
-      dominantHueHex,
-      bestCanvasAltKm,
-      canvasScore: +canvasScore.toFixed(2),
-      lowCloudBlockPct: Math.round(lowCloudBlock * 100),
-      slantAirmass,
-      transRedPct: +(transRed * 100).toFixed(1),
-      transBluePct: +(transBlue * 100).toFixed(1),
-      glareIndex,
-      glareRisk,
-      azimuthDiffDeg: minAzDiff,
-    };
-  }
-
   // 单点三维气象与遥感探针点查（供空间场画布鼠标悬停/点击实时读数）
   function inspectPointAt(xKm, yKm, zKm, time) {
     const z = zKm != null ? +zKm : (S.sliceAlt || 0.3);
@@ -1030,7 +938,7 @@
     worstVisibilityDetailed, seedingDiagnostics, optimalSeedingPoint,
     approachSlantProfile, turbulenceAndShearDiagnostics,
     uavLowAltitudeAssessment, cruiseContrailAssessment,
-    twilightOpticsAndGlare, inspectPointAt,
+    inspectPointAt,
     fieldStats, sensitivityGrid, sensitivityOpen,
     setPath, getPath, applyStatePatch,
   };
