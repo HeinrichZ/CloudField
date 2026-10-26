@@ -232,6 +232,7 @@
 
     // 将解析结果映射到 CloudField 的 Atmosphere.STATE（含低能见度/天气现象/垂直能见度对 3D 云雾与气溶胶消光场的反演）
     function toScene(report) {
+      if (A.resetRadiosonde) A.resetRadiosonde();
       const S = A.STATE;
       const notes = [], applied = [];
       if (report.station && /^[A-Z]{4}$/.test(report.station)) {
@@ -1055,6 +1056,7 @@
     // 将外部 SceneState 合并进 Atmosphere.STATE（含 layers 深合并）
     function applySnapshot(scene) {
       if (!scene) return;
+      if (A.resetRadiosonde) A.resetRadiosonde();
       const S = A.STATE;
       if (scene.atmosphere) {
         if (scene.atmosphere.temperature != null) S.surfaceTemp = scene.atmosphere.temperature;
@@ -1063,8 +1065,9 @@
         if (scene.atmosphere.lapseRate != null) S.lapseRate = scene.atmosphere.lapseRate;
       }
       if (scene.wind) {
+        state.lastWindUnit = scene.wind.speedUnit || 'MPS';
         if (scene.wind.direction != null) S.windDir = scene.wind.direction;
-        if (scene.wind.speed != null) S.windSpeed = Metar.windSpeedToMPS(scene.wind.speed, scene.wind.speedUnit || 'MPS');
+        if (scene.wind.speed != null) S.windSpeed = Metar.windSpeedToMPS(scene.wind.speed, state.lastWindUnit);
       }
       if (scene.visibility && scene.visibility.value != null) {
         // 用能见度反推“雾密度”：低于 1000m 时增强低云/雾的覆盖
@@ -1072,37 +1075,49 @@
         S.surfaceRH = v < 1000 ? Math.min(100, 60 + (1000 - v) / 10) : S.surfaceRH;
       }
       if (Array.isArray(scene.clouds)) {
-        scene.clouds.forEach((c, idx) => {
+        scene.clouds.forEach((c) => {
           const key = c.type === 'cumulonimbus' ? 'cb' : c.type === 'cirrus' ? 'ci' : c.type === 'altocumulus' || c.type === 'altostratus' ? 'cs' : c.type === 'cumulus' ? 'cu' : 'sc';
           const L = S.layers[key]; if (!L) return;
           L.on = true;
           L.base = Math.max(0.05, (c.baseHeight || 600) / 1000);
           L.top = Math.max(L.base + 0.5, ((c.baseHeight || 600) + (c.thickness || 1000)) / 1000);
           if (c.density != null) L.density = c.density;
-          if (c.amount) { /* 覆盖度可由 amount 估算，已在 METAR 中处理 */ }
+          if (c.amount && CLOUD_AMOUNT[c.amount]) L.coverage = CLOUD_AMOUNT[c.amount].cov;
         });
       }
       refreshUI();
     }
     function applyDelta(changes) {
       if (!changes) return;
-      // 支持点路径（如 'wind.speed'）与扁平键
+      const S = A.STATE;
+      // 支持点路径（如 'wind.speed', 'visibility.value', 'micro.*'）与扁平键
       Object.keys(changes).forEach(path => {
         const v = changes[path];
         const parts = path.split('.');
-        if (parts.length === 2 && parts[0] === 'wind' && parts[1] === 'speed') S_windSpeed(v);
-        else if (parts.length === 1) {
-          const S = A.STATE;
+        if (parts.length === 2) {
+          const [g, k] = parts;
+          if (g === 'wind' && k === 'speed') S.windSpeed = Metar.windSpeedToMPS(v, state.lastWindUnit || 'MPS');
+          else if (g === 'wind' && k === 'direction' && isFinite(v)) S.windDir = v;
+          else if (g === 'visibility' && k === 'value' && isFinite(v)) {
+            if (v < 1000) S.surfaceRH = Math.min(100, 60 + (1000 - v) / 10);
+          } else if (g === 'atmosphere') {
+            if (k === 'temperature' && isFinite(v)) S.surfaceTemp = v;
+            else if (k === 'pressure' && isFinite(v)) S.surfacePressure = v;
+            else if (k === 'humidity' && isFinite(v)) S.surfaceRH = v;
+            else if (k === 'lapseRate' && isFinite(v)) S.lapseRate = v;
+          } else if (g === 'micro' && S.micro && k in S.micro) {
+            S.micro[k] = v;
+          }
+        } else if (parts.length === 1) {
           if (path in S && typeof v === typeof S[path]) S[path] = v;
-          else if (path.startsWith('micro.')) { const k = path.slice(6); if (k in S.micro) S.micro[k] = v; }
         }
       });
       refreshUI();
     }
-    function S_windSpeed(v) { A.STATE.windSpeed = Metar.windSpeedToMPS(v, 'MPS'); }
 
     function refreshUI() {
-      if (global.GUI && global.GUI.build) global.GUI.build();
+      if (global.GUI && global.GUI.refreshAll) global.GUI.refreshAll();
+      else if (global.GUI && global.GUI.build) global.GUI.build();
       if (global.__cf && global.__cf.onChange) global.__cf.onChange();
     }
 
@@ -1164,7 +1179,7 @@
         <button data-tab="metar" class="active">${I18N.t('tab.metar')}</button>
         <button data-tab="vis">${I18N.t('tab.vis')}</button>
         <button data-tab="airport">${I18N.t('tab.airport')}</button>
-        <button data-tab="dispatch">🛫 签派放行总览</button>
+        <button data-tab="dispatch">${I18N.t('tab.dispatch')}</button>
         <button data-tab="bridge">${I18N.t('tab.bridge')}</button>
         <button data-tab="replay">${I18N.t('tab.replay')}</button>
       </div>
@@ -1222,9 +1237,10 @@
         const r = Metar.parse(input.value);
         const { applied, notes } = Metar.toScene(r);
         out.textContent = I18N.t('metar.applied') + '\n- ' + applied.join('\n- ') + (notes.length ? '\n\n' + I18N.t('metar.notesTitle') + '\n- ' + notes.join('\n- ') : '');
-        if (global.GUI && global.GUI.build) global.GUI.build();
+        if (global.GUI && global.GUI.refreshAll) global.GUI.refreshAll();
+        else if (global.GUI && global.GUI.build) global.GUI.build();
         if (global.__cf && global.__cf.onChange) global.__cf.onChange();
-        Bridge.startRecording(); recordOnce({ type: 'metar', label: r.station, raw: r.raw }); Bridge.stopRecording();
+        recordOnce({ type: 'metar', label: r.station, raw: r.raw });
       } catch (e) { out.textContent = I18N.t('metar.applyFail', { msg: e.message }); }
     };
     el.querySelector('#taf-parse').onclick = () => {
@@ -1407,7 +1423,8 @@
           S.aerosol.scaleH = 1.0;
         }
       }
-      if (global.GUI && global.GUI.build) global.GUI.build();
+      if (global.GUI && global.GUI.refreshAll) global.GUI.refreshAll();
+      else if (global.GUI && global.GUI.build) global.GUI.build();
       if (global.__cf && global.__cf.onChange) global.__cf.onChange();
       out.textContent = `已按目标能见度 ${targetV} m 同步三维场景云雾与气溶胶消光 (β ≈ ${(3.912 / targetV).toFixed(4)} m⁻¹)`;
     };

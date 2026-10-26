@@ -43,6 +43,7 @@
         ? global.Units.alt(S.sliceAlt, 1) + ' ' + global.Units.U.alt()
         : S.sliceAlt.toFixed(1) + ' km';
       if (titleEl) titleEl.textContent = (global.I18N ? I18N.t('axis.title') : '剖面高度');
+      if (global.GUI && global.GUI.syncValues) global.GUI.syncValues();
     };
 
     let dragging = false;

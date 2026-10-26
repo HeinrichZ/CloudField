@@ -1214,6 +1214,18 @@ win.Kessler.step(0.5, 3.0);
 win.Monitor.update(3.0, true);
 const dashHtml3 = byId.get('dash-readout').innerHTML;
 ok(dashHtml0.length > 50 && dashHtml3 !== dashHtml0, '能见度诊断仪表盘 (dash-readout) 随仿真时间实时刷新且数值动态演进');
+
+// 验证自定义探空序列化保持与默认重置清理、Bridge 增量点路径与 GUI/Report 状态同步
+win.Help.applyScenario('fzra');
+const fzraSnap = Amod.serialize();
+ok(!!fzraSnap.customRadiosonde && Amod.tempAt(1.4) > 1.5, 'fzra 场景序列化保留自定义探空暖鼻廓线');
+Amod.deserialize(snapBefore9);
+Amod.STATE.envT = 0; Amod.STATE.envRH = 0;
+const stdTemp14 = Amod.STATE.surfaceTemp - Amod.STATE.lapseRate * 1.4;
+ok(Math.abs(Amod.tempAt(1.4) - stdTemp14) < 0.05, 'deserialize 标准快照自动清除残留自定义探空（重置参数后不卡暖鼻廓线）');
+win.Integration.Bridge.applyDelta({ 'wind.speed': 14, 'visibility.value': 500, 'micro.effRadiusUm': 11.5 });
+ok(Amod.STATE.micro.effRadiusUm === 11.5 && Amod.STATE.surfaceRH >= 95, 'Bridge.applyDelta 支持 micro.* 与 visibility.value 等双层点路径增量更新');
+ok(typeof win.Report.isAnnotating === 'function' && win.Report.isAnnotating() === false && typeof win.GUI.syncValues === 'function', 'Report.isAnnotating 与 GUI.syncValues 正常导出');
 Amod.deserialize(snapBefore9);
 
 // ================= 汇总 =================

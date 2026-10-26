@@ -539,6 +539,7 @@
   function effectiveLayers() {
     const life = STATE.autoLife ? (0.5 + 0.5 * Math.sin(STATE.lifePhase)) : STATE.lifeManual;
     const conv = STATE.convection / 100;
+    if (STATE.thermoCoupledBase) syncCloudBasesToLCL();
     const zLcl = STATE.thermoCoupledBase ? Math.max(0.15, Math.min(5.0, lclHeight())) : null;
     const kes = STATE.kessler;
     const useWashout = !!(kes && kes.on && kes.washoutFeedback !== false);
@@ -783,18 +784,28 @@
 
   // ============ 带版本号的快照序列化 ============
   function serialize() {
-    return {
+    const out = {
       app: APP_NAME,
       snapshotVersion: SNAPSHOT_VERSION,
       savedAt: new Date().toISOString(),
       state: JSON.parse(JSON.stringify(STATE)),
     };
+    if (useCustomSounding && activeRadiosonde && activeRadiosonde !== RADIOSONDE_SAMPLE) {
+      out.customRadiosonde = JSON.parse(JSON.stringify(activeRadiosonde));
+    }
+    return out;
   }
   function deserialize(obj) {
     if (!obj || obj.state == null) throw new Error('快照格式无效');
     if (obj.snapshotVersion !== SNAPSHOT_VERSION) {
       console.warn('CloudField: 快照版本 ' + obj.snapshotVersion +
         ' 与当前 ' + SNAPSHOT_VERSION + ' 不完全兼容，已尽量映射。');
+    }
+    if (obj.customRadiosonde && Array.isArray(obj.customRadiosonde.data) && obj.customRadiosonde.data.length >= 3) {
+      activeRadiosonde = JSON.parse(JSON.stringify(obj.customRadiosonde));
+      useCustomSounding = true;
+    } else {
+      resetRadiosonde();
     }
     const s = obj.state;
     const scalarKeys = ['surfaceTemp','surfacePressure','surfaceRH','lapseRate','dewLapse','dryLapseRate',

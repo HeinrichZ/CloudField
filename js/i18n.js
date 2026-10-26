@@ -338,6 +338,13 @@
       'tint.Nd': '滴数浓度 N',
       'const.ccn': 'CCN 活化耦合 (β_aer+w → N_c)', 'const.ccn.tip': 'Twomey / Abdul-Razzak 气溶胶与上升气流耦合活化云滴数浓度 N_c',
       'sen.rain': '降水率 R (mm/h)', 'sen.albedo': '云反照率 Albedo',
+      'p.thermoBase': '热力学锚定对流云底 (Cu/Cb → LCL)', 'p.thermoBase.tip': '开启后积云/积雨云底高自动锚定至抬升凝结高度 LCL，满足气块热力学一致性',
+      'adv.profileMode': '垂直廓线图模式', 'adv.profileMode.tip': '切换直角坐标 T-z 廓线与斜温对数压图 Skew-T log-p',
+      'prof.tz': '直角 T-z 廓线', 'prof.skewt': '斜温图 Skew-T log-p',
+      'kes.washout': '降水消耗反馈 (q_r 冲刷消云)', 'kes.washout.tip': '开启后，雨水与冰相降水生成会按质量守恒折减云水密度与能见度消光',
+      'ex.matlab': '导出 MATLAB/Simulink 结构体 (.m)', 'ex.fluent': '导出 ANSYS Fluent 边界 (.prof)', 'ex.of': '导出 OpenFOAM 边界字典',
+      'help.fzra': '冻雨暖鼻积冰 (FZRA/SLD)', 'help.plateau': '高原高温高密 (Hot-High)',
+      'tab.dispatch': '🛫 签派放行总览',
     },
 
     en: {
@@ -629,6 +636,13 @@
       'tint.Nd': 'Droplet N',
       'const.ccn': 'CCN Activation Coupling (β_aer+w → N_c)', 'const.ccn.tip': 'Twomey / Abdul-Razzak aerosol and updraft coupled droplet activation N_c',
       'sen.rain': 'Rain Rate R (mm/h)', 'sen.albedo': 'Cloud Albedo',
+      'p.thermoBase': 'LCL-Anchored Convective Base (Cu/Cb → LCL)', 'p.thermoBase.tip': 'Anchor cumulus/cumulonimbus cloud base to Lifting Condensation Level (LCL) for parcel thermodynamic consistency',
+      'adv.profileMode': 'Vertical Profile Mode', 'adv.profileMode.tip': 'Switch between Cartesian T-z profile and Skew-T log-p diagram',
+      'prof.tz': 'Cartesian T-z Profile', 'prof.skewt': 'Skew-T log-p Diagram',
+      'kes.washout': 'Precipitation Depletion Feedback (q_r washout)', 'kes.washout.tip': 'Deplete cloud water density and extinction as rain/ice precipitation forms (mass conservation)',
+      'ex.matlab': 'Export MATLAB/Simulink Struct (.m)', 'ex.fluent': 'Export ANSYS Fluent Profile (.prof)', 'ex.of': 'Export OpenFOAM Boundary Dict',
+      'help.fzra': 'Freezing Rain Warm-Nose (FZRA/SLD)', 'help.plateau': 'Hot-and-High Plateau (ISA+23°C)',
+      'tab.dispatch': '🛫 Flight Dispatch & ATC',
     },
 
     de: {
@@ -920,6 +934,13 @@
       'tint.Nd': 'Tröpfchenzahl N',
       'const.ccn': 'CCN-Aktivierungskopplung (β_aer+w → N_c)', 'const.ccn.tip': 'Twomey / Abdul-Razzak Aerosol- und Aufwind-gekoppelte Tropfenaktivierung N_c',
       'sen.rain': 'Regenrate R (mm/h)', 'sen.albedo': 'Wolkenalbedo',
+      'p.thermoBase': 'LCL-gekoppelte Konvektionsbasis (Cu/Cb → LCL)', 'p.thermoBase.tip': 'Cumulus/Cumulonimbus-Wolkenuntergrenze an das Hebungskondensationsniveau (LCL) koppeln',
+      'adv.profileMode': 'Vertikalprofil-Modus', 'adv.profileMode.tip': 'Zwischen kartesischem T-z-Profil und Skew-T-log-p-Diagramm umschalten',
+      'prof.tz': 'Kartesisches T-z-Profil', 'prof.skewt': 'Skew-T-log-p-Diagramm',
+      'kes.washout': 'Niederschlags-Auswasch-Rückkopplung (q_r)', 'kes.washout.tip': 'Wolkendichte und Extinktion durch Niederschlagsbildung massenerhaltend reduzieren',
+      'ex.matlab': 'MATLAB/Simulink-Struktur (.m)', 'ex.fluent': 'ANSYS Fluent Profil (.prof)', 'ex.of': 'OpenFOAM Randbedingung',
+      'help.fzra': 'Gefrierender Regen / Warmnase (FZRA/SLD)', 'help.plateau': 'Hochplateau Heiß & Hoch (Hot-High)',
+      'tab.dispatch': '🛫 Flugdienstberatung & ATC',
     },
   };
 

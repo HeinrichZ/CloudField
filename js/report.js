@@ -110,6 +110,7 @@ ${img ? '<h3>三维视口快照</h3><img src="' + img + '" alt="viewport">' : ''
     overlay = o;
   }
   function pos(e, o) { const r = o.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+  function isAnnotating() { return !!overlay; }
   function disableAnnotation() { if (overlay) { overlay.remove(); overlay = null; } }
   function exportAnnotated() {
     const c = document.getElementById('gl');
@@ -124,6 +125,6 @@ ${img ? '<h3>三维视口快照</h3><img src="' + img + '" alt="viewport">' : ''
 
   global.Report = {
     generateHTML, download, makeShareLink, loadFromHash,
-    enableAnnotation, disableAnnotation, exportAnnotated,
+    enableAnnotation, disableAnnotation, isAnnotating, exportAnnotated,
   };
 })(window);

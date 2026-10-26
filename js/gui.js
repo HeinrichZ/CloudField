@@ -13,8 +13,17 @@
   const U = global.Units;
   let container;
   let playBtn;
+  let syncedCtrls = [];
+
+  function syncValues() {
+    for (let i = 0; i < syncedCtrls.length; i++) {
+      if (syncedCtrls[i] && syncedCtrls[i]._set) syncedCtrls[i]._set();
+    }
+  }
 
   function notifyChange() {
+    if (S.thermoCoupledBase && A.syncCloudBasesToLCL) A.syncCloudBasesToLCL();
+    syncValues();
     if (global.__cf && global.__cf.onChange) global.__cf.onChange();
     if (global.Recorder && global.Recorder.R && global.Recorder.R.recording) global.Recorder.record('param');
   }
@@ -38,6 +47,7 @@
     show();
     input.addEventListener('input', () => { set(parseFloat(input.value)); show(); notifyChange(); });
     wrap._set = () => { input.value = get(); show(); };
+    syncedCtrls.push(wrap);
     return wrap;
   }
 
@@ -210,7 +220,9 @@
   }
 
   function build() {
+    if (!container) return;
     container.innerHTML = '';
+    syncedCtrls = [];
     container.appendChild(toolbar());
 
     container.appendChild(group(I18N.t('grp.scene'), [
@@ -220,11 +232,11 @@
       rangeCtrl(I18N.t('p.lapse'), 0, 12, 0.1, U.U.lapse(), () => S.lapseRate, v => S.lapseRate = v, x => x.toFixed(1), I18N.t('p.lapse.tip')),
       rangeCtrl(I18N.t('p.dewLapse'), 0, 4, 0.1, U.U.lapse(), () => S.dewLapse, v => S.dewLapse = v, x => x.toFixed(1), I18N.t('p.dewLapse.tip')),
       rangeCtrl(I18N.t('p.dryLapse'), 6, 12, 0.1, U.U.lapse(), () => S.dryLapseRate, v => S.dryLapseRate = v, x => x.toFixed(1), I18N.t('p.dryLapse.tip')),
-      toggleCtrl('LCL 热力学自动锚定对流云底', () => !!S.thermoCoupledBase, v => {
+      toggleCtrl(I18N.t('p.thermoBase'), () => !!S.thermoCoupledBase, v => {
         S.thermoCoupledBase = v;
         if (v && A.syncCloudBasesToLCL) A.syncCloudBasesToLCL();
         build();
-      }, '开启后积云 (Cu) 与积雨云 (Cb) 云底高度自动跟随抬升凝结高度 LCL 实时升降'),
+      }, I18N.t('p.thermoBase.tip')),
       toggleCtrl(I18N.t('p.envCycle'), () => S.envCycle, v => { S.envCycle = v; if (!v) { S.envT = 0; S.envRH = 0; } }, I18N.t('p.envCycle.tip')),
       rangeCtrl(I18N.t('p.windSpeed'), 0, 30, 0.5, U.U.wind(), () => S.windSpeed, v => S.windSpeed = v, x => U.wind(x, 1), I18N.t('p.windSpeed.tip')),
       compassCtrl(I18N.t('p.windDir'), () => S.windDir, v => S.windDir = v, I18N.t('p.windDir.tip')),
@@ -247,15 +259,18 @@
         ['water', I18N.t('vm.water')], ['coverage', I18N.t('vm.coverage')],
       ], () => S.viewMode, v => S.viewMode = v, I18N.t('adv.viewMode.tip')),
       toggleCtrl(I18N.t('adv.band'), () => S.fieldBand !== false, v => S.fieldBand = v, I18N.t('adv.band.tip')),
-      selCtrl('底部探空坐标模式', [
-        ['tz', '直角 T-z 高度廓线图'],
-        ['skewt', 'Skew-T log-p 斜温图'],
-      ], () => S.profileMode || 'tz', v => S.profileMode = v, '切换正交 T-z 廓线与气象标准 45° 斜温-对数气压图'),
+      selCtrl(I18N.t('adv.profileMode'), [
+        ['tz', I18N.t('prof.tz')],
+        ['skewt', I18N.t('prof.skewt')],
+      ], () => S.profileMode || 'tz', v => S.profileMode = v, I18N.t('adv.profileMode.tip')),
       selCtrl(I18N.t('adv.tintField'), [
         ['off', I18N.t('tint.off')], ['lwc', I18N.t('tint.lwc')], ['beta', I18N.t('tint.beta')], ['re', I18N.t('tint.re')], ['Nd', I18N.t('tint.Nd')],
       ], () => S.tintField, v => S.tintField = v, I18N.t('adv.tintField.tip')),
       rangeCtrl(I18N.t('adv.tintAmt'), 0, 1, 0.05, '', () => S.tintAmt, v => S.tintAmt = v, x => x.toFixed(2), I18N.t('adv.tintAmt.tip')),
-      rangeCtrl(I18N.t('adv.sliceAlt'), 0, 14, 0.1, U.U.alt(), () => S.sliceAlt, v => S.sliceAlt = v, x => U.alt(x, 2), I18N.t('adv.sliceAlt.tip')),
+      rangeCtrl(I18N.t('adv.sliceAlt'), 0, 14, 0.1, U.U.alt(), () => S.sliceAlt, v => {
+        S.sliceAlt = v;
+        if (global.__cfAxis && global.__cfAxis.refresh) global.__cfAxis.refresh();
+      }, x => U.alt(x, 2), I18N.t('adv.sliceAlt.tip')),
       toggleCtrl(I18N.t('adv.slice'), () => S.showSlice, v => S.showSlice = v, I18N.t('adv.slice.tip')),
       toggleCtrl(I18N.t('adv.sun'), () => S.showSun, v => S.showSun = v, I18N.t('adv.sun.tip')),
       toggleCtrl(I18N.t('adv.grid'), () => S.showGrid, v => S.showGrid = v, I18N.t('adv.grid.tip')),
@@ -288,12 +303,13 @@
       rangeCtrl(I18N.t('seed.inp'), 5, 500, 5, 'L⁻¹', () => (S.seeding && S.seeding.inpConc) || 80, v => { if (S.seeding) S.seeding.inpConc = v; }, x => x.toFixed(0), I18N.t('seed.inp.tip')),
       rangeCtrl(I18N.t('seed.eff'), 0.1, 0.95, 0.05, '', () => (S.seeding && S.seeding.glaciationEff != null) ? S.seeding.glaciationEff : 0.85, v => { if (S.seeding) S.seeding.glaciationEff = v; }, x => x.toFixed(2), I18N.t('seed.eff.tip')),
       toggleCtrl(I18N.t('kes.on'), () => (S.kessler ? !!S.kessler.on : false), v => { if (global.Kessler) { global.Kessler.ensure(); S.kessler.on = v; } }, I18N.t('kes.on.tip')),
-      toggleCtrl('降水耗云质量守恒反馈', () => !(S.kessler && S.kessler.washoutFeedback === false), v => { if (S.kessler) S.kessler.washoutFeedback = v; }, '将自动转化与碰并生成的雨水消耗实时反馈至三维/二维云场密度，演示暖雨消散与 Albrecht 云寿命效应'),
+      toggleCtrl(I18N.t('kes.washout'), () => !(S.kessler && S.kessler.washoutFeedback === false), v => { if (S.kessler) S.kessler.washoutFeedback = v; }, I18N.t('kes.washout.tip')),
       btn('↺ ' + I18N.t('kes.reset'), () => { if (global.Kessler) global.Kessler.reset(); notifyChange(); }, I18N.t('kes.reset.tip')),
     ], true));
 
     container.appendChild(advancedGroup());
     syncPlay();
+    if (global.__cfAxis && global.__cfAxis.refresh) global.__cfAxis.refresh();
   }
 
   function exportJSON() {
@@ -387,8 +403,11 @@
   }
 
   let advBuilt = false;
+  let activeAdvTab = 'cloudlab';
+  let tsTimer = null;
   function buildAdvModal() {
     if (advBuilt) return; advBuilt = true;
+    if (tsTimer) { clearInterval(tsTimer); tsTimer = null; }
     const body = document.getElementById('adv-body');
     if (!body) return;
     body.innerHTML = '';
@@ -396,15 +415,19 @@
     const panes = document.createElement('div'); panes.className = 'adv-panes';
     body.appendChild(nav); body.appendChild(panes);
     const items = ['cloudlab', 'timeseries', 'spatial', 'sensitivity', 'qc', 'export', 'validation', 'recorder', 'report', 'help', 'scenarios'];
+    if (items.indexOf(activeAdvTab) < 0) activeAdvTab = 'cloudlab';
     const paneEls = {};
-    items.forEach((it, i) => {
+    items.forEach((it) => {
+      const isAct = (it === activeAdvTab);
       const b = btn(I18N.t('nav.' + it), () => {
+        activeAdvTab = it;
         Object.keys(paneEls).forEach(p => paneEls[p].style.display = (p === it ? '' : 'none'));
         nav.querySelectorAll('button').forEach(x => x.classList.toggle('active', x.textContent === I18N.t('nav.' + it)));
+        if (paneEls[it] && paneEls[it]._refresh) paneEls[it]._refresh();
       });
-      b.className = 'adv-nav-btn' + (i === 0 ? ' active' : '');
+      b.className = 'adv-nav-btn' + (isAct ? ' active' : '');
       nav.appendChild(b);
-      const p = document.createElement('div'); p.className = 'adv-pane'; p.style.display = (i === 0 ? '' : 'none');
+      const p = document.createElement('div'); p.className = 'adv-pane'; p.style.display = (isAct ? '' : 'none');
       paneEls[it] = p; panes.appendChild(p);
     });
     buildCloudLabPane(paneEls.cloudlab);
@@ -484,6 +507,7 @@
                  card('CRE_SW / ΔF_Tw', (ops.creSW || 0).toFixed(1) + ' / ' + (ops.twomeyForcing || 0).toFixed(1) + ' W/m²') : '');
       }
     }
+    root._refresh = refreshCloudLab;
     setTimeout(refreshCloudLab, 0);
   }
   function buildTimeSeriesPane(root) {
@@ -499,7 +523,6 @@
     const cv = document.createElement('canvas'); cv.id = 'ts-curve'; cv.width = 420; cv.height = 170; cv.className = 'adv-canvas'; root.appendChild(cv);
     const slider = document.createElement('input'); slider.type = 'range'; slider.min = '0'; slider.max = '1000'; slider.value = '0'; root.appendChild(slider);
     const lab = document.createElement('div'); lab.className = 'range-hint'; root.appendChild(lab);
-    let timer = null;
     slider.addEventListener('input', () => {
       const ts = global.TimeSeries.TS; if (!ts.steps.length) return;
       const t = ts.t0 + (ts.t1 - ts.t0) * slider.value / 1000; global.TimeSeries.sampleAt(t);
@@ -508,13 +531,13 @@
       lab.textContent = I18N.t('ts.t0') + ' ' + t.toFixed(1) + 'h  vis=' + (isFinite(w.vis) ? (w.vis >= 1000 ? (w.vis / 1000).toFixed(2) + 'km' : w.vis.toFixed(0) + 'm') : '∞');
     });
     playBtn.onclick = () => {
-      if (timer) { clearInterval(timer); timer = null; playBtn.textContent = I18N.t('ts.play'); return; }
+      if (tsTimer) { clearInterval(tsTimer); tsTimer = null; playBtn.textContent = I18N.t('ts.play'); return; }
       const ts = global.TimeSeries.TS; if (!ts.steps.length) global.TimeSeries.applyDefault();
       playBtn.textContent = '⏸'; let t = global.TimeSeries.TS.t0;
-      timer = setInterval(() => {
+      tsTimer = setInterval(() => {
         global.TimeSeries.sampleAt(t); slider.value = String(Math.round((t - ts.t0) / (ts.t1 - ts.t0) * 1000));
         if (global.__cf) global.__cf.onChange();
-        t += 0.5; if (t > ts.t1) { if (global.TimeSeries.TS.loop) t = ts.t0; else { clearInterval(timer); timer = null; playBtn.textContent = I18N.t('ts.play'); } }
+        t += 0.5; if (t > ts.t1) { if (global.TimeSeries.TS.loop) t = ts.t0; else { clearInterval(tsTimer); tsTimer = null; playBtn.textContent = I18N.t('ts.play'); } }
       }, 120);
     };
     function updateTSCurve() { const cv = document.getElementById('ts-curve'); if (!cv) return; const curve = global.TimeSeries.visibilityCurve(64).map(p => p.vis); if (global.Monitor) global.Monitor.drawCurve(cv, curve, 'vis'); }
@@ -524,7 +547,10 @@
   function buildSpatialPane(root) {
     root.innerHTML = '<h3>' + I18N.t('sp.title') + '</h3>';
     // 与右侧剖面轴同区间（0–14 km），否则先拖到 3 km 再开此页会被钳到 2 km，看起来像数值错乱
-    root.appendChild(rangeCtrl(I18N.t('sp.alt'), 0, 14, 0.1, 'km', () => S.sliceAlt, v => S.sliceAlt = v, x => x.toFixed(1)));
+    root.appendChild(rangeCtrl(I18N.t('sp.alt'), 0, 14, 0.1, 'km', () => S.sliceAlt, v => {
+      S.sliceAlt = v;
+      if (global.__cfAxis && global.__cfAxis.refresh) global.__cfAxis.refresh();
+    }, x => x.toFixed(1)));
     const row = document.createElement('div'); row.className = 'btn-row wrap';
     row.appendChild(btn(I18N.t('sp.compute'), () => updateField())); root.appendChild(row);
     const cv = document.createElement('canvas'); cv.id = 'sp-field'; cv.width = 256; cv.height = 256; cv.className = 'adv-canvas'; root.appendChild(cv);
@@ -563,6 +589,7 @@
         const oe = document.getElementById('sp-ops'); if (oe) oe.innerHTML = rows.join('');
       }
     }
+    root._refresh = updateField;
     setTimeout(updateField, 0);
   }
 
@@ -706,9 +733,9 @@
     row.appendChild(btn(I18N.t('ex.yaml'), () => { curFile = 'cloudlab_experiment.yaml'; ta.value = global.Exporter.toExperimentYAML(); }));
     row.appendChild(btn(I18N.t('ex.profCsv'), () => { curFile = 'CloudField_profile.csv'; ta.value = global.Exporter.toProfileCSV(0); }));
     row.appendChild(btn(I18N.t('ex.schCsv'), () => { curFile = 'CloudField_schemes.csv'; ta.value = global.Exporter.toSchemeCSV(); }));
-    row.appendChild(btn('MATLAB / Simulink (.m)', () => { curFile = 'CloudField_data.m'; ta.value = global.Exporter.toMATLABScript(0); }));
-    row.appendChild(btn('OpenFOAM 边界 (ABLConditions)', () => { curFile = 'ABLConditions.foam'; ta.value = global.Exporter.toOpenFOAM(0); }));
-    row.appendChild(btn('ANSYS Fluent / FENSAP (.prof)', () => { curFile = 'CloudField_inlet.prof'; ta.value = global.Exporter.toFluentProfile(0); }));
+    row.appendChild(btn(I18N.t('ex.matlab'), () => { curFile = 'CloudField_data.m'; ta.value = global.Exporter.toMATLABScript(0); }));
+    row.appendChild(btn(I18N.t('ex.of'), () => { curFile = 'ABLConditions.foam'; ta.value = global.Exporter.toOpenFOAM(0); }));
+    row.appendChild(btn(I18N.t('ex.fluent'), () => { curFile = 'CloudField_inlet.prof'; ta.value = global.Exporter.toFluentProfile(0); }));
     row.appendChild(btn('ParaView / Tecplot 3D (.vtk)', () => { curFile = 'CloudField_volume.vtk'; ta.value = global.Exporter.toVTK3D(); }));
     row.appendChild(btn(I18N.t('ex.copy'), () => { if (navigator.clipboard) navigator.clipboard.writeText(ta.value); }));
     row.appendChild(btn('⬇ ' + I18N.t('tb.export'), () => {
@@ -739,7 +766,7 @@
       refreshAll(); notifyChange(); runVal();
     }));
     row.appendChild(btn('↺ ' + I18N.t('ts.default'), () => {
-      A.resetRadiosonde(); ta.value = ''; runVal();
+      A.resetRadiosonde(); ta.value = ''; refreshAll(); notifyChange(); runVal();
     }));
     root.appendChild(row);
     const stats = document.createElement('div'); stats.id = 'val-stats'; stats.className = 'stat-cards'; root.appendChild(stats);
@@ -752,6 +779,7 @@
       if (st) el.innerHTML = card(I18N.t('val2.bias'), st.bias.toFixed(0)) + card(I18N.t('val2.rmse'), st.rmse.toFixed(0)) + card(I18N.t('val2.mae'), st.mae.toFixed(0)) + card(I18N.t('val2.corr'), st.corr.toFixed(2));
       if (global.Monitor) { global.Monitor.drawScatter(cv1, d.visPairs); const t = global.Validation.taylor(d.visPairs); if (t) global.Monitor.drawTaylor(cv2, t); }
     }
+    root._refresh = runVal;
   }
 
   function buildRecorderPane(root) {
@@ -775,9 +803,28 @@
     root.innerHTML = '<h3>' + I18N.t('rep.title') + '</h3>';
     const row = document.createElement('div'); row.className = 'btn-row wrap';
     row.appendChild(btn(I18N.t('rep.html'), () => global.Report.download()));
-    const share = btn(I18N.t('rep.share')); share.onclick = () => { const link = global.Report.makeShareLink(); const inp = document.createElement('input'); inp.value = link; inp.style.width = '90%'; root.appendChild(inp); if (navigator.clipboard) navigator.clipboard.writeText(link); };
+    let shareInp = null;
+    const share = btn(I18N.t('rep.share'));
+    share.onclick = () => {
+      const link = global.Report.makeShareLink();
+      if (!shareInp) {
+        shareInp = document.createElement('input');
+        shareInp.style.width = '90%';
+        shareInp.style.marginTop = '6px';
+        shareInp.readOnly = true;
+        root.appendChild(shareInp);
+      }
+      shareInp.value = link;
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link);
+    };
     row.appendChild(share);
-    const ann = btn(I18N.t('rep.annotate')); ann.onclick = () => { if (global.Report.exportAnnotated()) global.Report.disableAnnotation(); else global.Report.enableAnnotation(); };
+    const ann = btn(I18N.t('rep.annotate'));
+    ann.onclick = () => {
+      if (!global.Report) return;
+      const on = global.Report.isAnnotating ? global.Report.isAnnotating() : false;
+      if (on) { global.Report.disableAnnotation(); ann.classList.remove('active'); }
+      else { global.Report.enableAnnotation(); ann.classList.add('active'); }
+    };
     row.appendChild(ann);
     row.appendChild(btn(I18N.t('rep.exportAnno'), () => { const u = global.Report.exportAnnotated(); if (u) { const a = document.createElement('a'); a.href = u; a.download = 'CloudField_annotated.png'; a.click(); } }));
     root.appendChild(row);
@@ -804,15 +851,26 @@
       ['cirrus', I18N.t('help.cirrus')],
       ['cloudlab', 'CLOUDLAB Seeding'],
       ['cbstorm', 'Cb Storm'],
-      ['fzra', '冻雨暖鼻积冰 (FZRA/SLD)'],
-      ['plateau', '高原高温高密 (Hot-High)'],
+      ['fzra', I18N.t('help.fzra')],
+      ['plateau', I18N.t('help.plateau')],
     ].forEach(([k, lbl]) => {
-      row.appendChild(btn(lbl, () => { if (global.Help) global.Help.applyScenario(k); refreshAll(); }));
+      row.appendChild(btn(lbl, () => {
+        if (global.Help) global.Help.applyScenario(k);
+        refreshAll();
+        notifyChange();
+      }));
     });
     root.appendChild(row);
   }
 
-  function refreshAll() { build(); syncPlay(); }
+  function refreshAll() {
+    build();
+    syncPlay();
+    if (global.__cfAxis && global.__cfAxis.refresh) global.__cfAxis.refresh();
+    advBuilt = false;
+    const m = document.getElementById('adv-modal');
+    if (m && !m.classList.contains('hidden')) buildAdvModal();
+  }
 
-  global.GUI = { init, build, syncPlay, openAdv, refreshAll };
+  global.GUI = { init, build, syncPlay, syncValues, openAdv, refreshAll };
 })(window);
