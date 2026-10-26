@@ -12,7 +12,7 @@
   const S = A.STATE;
   const VT = 5.0;        // 雨滴特征落速 m/s
   const VT_ICE = 1.8;    // 播云生成冰晶/雪晶聚合体特征落速 m/s
-  const TAU_COND = 60;   // 凝结维持时间常数 s
+  const TAU_COND = 12;   // 凝结维持时间常数 s
 
   function ensure() {
     if (!S.kessler) {
@@ -27,7 +27,11 @@
     return S.kessler;
   }
 
-  function layerMid(L) { return 0.5 * (L.base + L.top); }
+  function layerMid(L) {
+    const ty = L.type != null ? L.type : A.LAYER_ORDER.indexOf(L.key);
+    const peak = ty === 0 ? 0.75 : (ty === 1 ? 0.5 : (ty === 2 ? 0.4 : (ty === 3 ? 0.32 : 0.4)));
+    return L.base + peak * (L.top - L.base);
+  }
 
   // 三种微物理参数化方案的自动转化率 P_ac (kg/kg/s) 与碰并率 P_gr (kg/kg/s)
   function ratesForScheme(scheme, qc, qr, opts) {
@@ -107,16 +111,22 @@
       const key = L.key;
       const zMid = layerMid(L);
       const rho = Math.max(0.3, A.airDensityAt(zMid));
-      // 5 点十字网格平均取未播撒背景目标云水（避免单点落入积云空隙，且消除播云空间沟槽与 wbfRate 的双重扣减）
-      let lwcSum = 0;
+      // 5 点十字网格取未播撒背景云核与层平均云水（避免单点落入积云空隙，且消除播云空间沟槽与 wbfRate 的双重扣减）
+      let lwcSum = 0, lwcPeak = 0;
       for (let p = 0; p < SAMPLE_PTS.length; p++) {
         const f = A.sampleFields(SAMPLE_PTS[p][0], SAMPLE_PTS[p][1], zMid, layers, wind, t);
         const lwcAmb = (f.seedDepletion && f.seedDepletion < 0.99) ? (f.lwc / (1 - f.seedDepletion)) : f.lwc;
-        lwcSum += Math.max(0, lwcAmb);
+        const lv = Math.max(0, lwcAmb);
+        lwcSum += lv;
+        if (lv > lwcPeak) lwcPeak = lv;
       }
       const lwcMean = lwcSum / SAMPLE_PTS.length;
-      const qcT = lwcMean * 1e-3 / rho;                   // kg/kg
+      const upBoost = 1 + 0.45 * ((S.convection || 0) / 100);
+      const lwcAdiab = A.lwcFromDensity(L.density, L.kind) * (0.72 + 0.28 * L.coverage);
+      const lwcCore = Math.max(0.75 * lwcPeak + 0.25 * lwcMean, 0.78 * lwcAdiab + 0.22 * lwcPeak) * upBoost;
+      const qcT = lwcCore * 1e-3 / rho;                   // kg/kg
       let qc = k.qc[key] || 0, qr = k.qr[key] || 0, qi = k.qi[key] || 0;
+      if (qc <= 0 && (k.steps || 0) === 0 && qcT > 0) qc = qcT;
       // 凝结源：向目标云水松弛
       qc += (qcT - qc) * Math.min(1, d / TAU_COND);
       // 选定参数化方案的自动转化 + 碰并

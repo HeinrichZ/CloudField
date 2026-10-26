@@ -161,7 +161,12 @@
         syncStatus(); }
 
       monT += dt;
-      if (monT >= 0.08) { if (!sweeping) global.Monitor.update(timeSec); monT = 0; }
+      if (monT >= 0.08) {
+        if (!sweeping) {
+          try { global.Monitor.update(timeSec); } catch (e) { console.warn('Monitor.update error:', e); }
+        }
+        monT = 0;
+      }
 
       if (!started) { started = true; loading.style.display = 'none'; }
       requestAnimationFrame(frame);
@@ -205,12 +210,16 @@
     if (q) q.textContent = 'Q ' + S.quality.toFixed(2);
   }
 
-  // 参数变化：重置 TAA + 防抖请求 occupancy 重算（密度粗网格在 Worker 中）
+  // 参数变化：重置 TAA + 防抖请求 occupancy 重算（密度粗网格在 Worker 中）+ 立即刷新能见度诊断仪表盘
   function onParamChange() {
     if (!renderer) return;
     renderer.resetAccum();
     if (occTimer) clearTimeout(occTimer);
     occTimer = setTimeout(() => renderer.requestOccupancy(), 160);
+    if (global.Monitor && global.Monitor.update && !A.STATE.__sweeping) {
+      const t = (global.__cf && global.__cf.getTime) ? global.__cf.getTime() : 0;
+      try { global.Monitor.update(t, true); } catch (_) {}
+    }
   }
 
   // ---------------- 文档弹窗（可信度说明） ----------------

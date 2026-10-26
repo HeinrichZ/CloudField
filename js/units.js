@@ -36,8 +36,8 @@
   function wind(ms, digits) { return num(ms, digits == null ? 1 : digits); }
   function vis(m) {
     if (!isFinite(m)) return '∞';
-    if (isSI()) return num(m, 0);
-    return m >= 1000 ? num(m / 1000, 2) : num(m, 0);
+    if (isSI()) return m < 100 ? num(m, 1) : num(m, 0);
+    return m >= 1000 ? num(m / 1000, 2) : (m < 100 ? num(m, 1) : num(m, 0));
   }
   function num(v, digits) {
     if (v == null || !isFinite(v)) return '—';

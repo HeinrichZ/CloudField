@@ -505,16 +505,16 @@
 
   const altHist = [];   // 近 5 次最差高度，中值滤波（消除相邻层 argmin 抖动）
   let lastDashT = -1;   // 仪表盘整帧节流（含扫描/取样/DOM），避免扫描尖峰拖慢渲染
+  let lastDashSig = '';
 
-  function updateDashboardReadout(timeSec) {
+  function updateDashboardReadout(timeSec, force) {
     const S = A.STATE;
     const t = timeSec || 0;
     const layers = A.effectiveLayers();
     const wind = { x: S.windSpeed, dir: S.windDir };
-    // 最差能见度扫描（3×3×27 样本）约 3–4 ms；整个仪表盘限制到 ~6 Hz，
-    // 避免每 80 ms 一次的扫描尖峰把帧时间推过自适应分辨率阈值（>24 ms 会降 pixelRatio + TAA 重置）。
+    // 最差能见度扫描（3×3×27 样本）约 3–4 ms；整个仪表盘限制到 ~8 Hz（参数改动或点击时 force 立即刷新）
     const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-    if (nowMs - lastDashT < 160) return;
+    if (!force && nowMs - lastDashT < 120) return;
     lastDashT = nowMs;
     const wv = A.worstVisibility(layers, wind, t);
     // 中值滤波：相邻层能见度几乎相等时 argmin 会每帧在 1.0/1.5 km 之间翻，
@@ -571,7 +571,7 @@
           `<em>${I18N.t('dash.reDeriv', { v: lwc > 1e-6 ? reDeriv.toFixed(1) : '—' })}</em></div>` +
         `<div class="dv-row"><span>${I18N.t('dash.N')}</span><b>${N.toFixed(0)} cm⁻³</b></div>` +
         (kr ? `<div class="dv-row"><span>${I18N.t('const.scheme')}</span><b>${(kr.scheme || 'kessler').toUpperCase()}</b></div>` +
-              `<div class="dv-row"><span>${I18N.t('dash.rain')}</span><b>${kr.rainRate.toFixed(2)} mm/h</b></div>` +
+              `<div class="dv-row"><span>${I18N.t('dash.rain')}</span><b>${(kr.rainRate > 0 && kr.rainRate < 0.1) ? kr.rainRate.toFixed(3) : kr.rainRate.toFixed(2)} mm/h</b></div>` +
               `<div class="dv-row"><span>${I18N.t('dash.qr')}</span><b>${kr.qrTotal.toExponential(2)} kg/kg</b></div>` : '');
     }
     if (els.dashFormula) {
@@ -652,8 +652,10 @@
       `${S.profileMode || 'tz'},${S.thermoCoupledBase ? 1 : 0},${S.kessler ? (S.kessler.rainRate || 0).toFixed(2) + ':' + (S.kessler.steps || 0) : 0},` +
       `${sd.on ? 1 : 0},${sd.agent},${sd.inpConc},${sd.glaciationEff},${sd.alt},${sd.x0},${sd.z0},${sd.width},${sd.diffK},${life}|${lSig}`;
   }
-  function update(timeSec) {
+  function update(timeSec, force) {
     const sig = stateSig();
+    const paramChanged = sig !== lastDashSig;
+    lastDashSig = sig;
     if (sig !== lastProfSig) {
       drawProfile();
       lastProfSig = sig;
@@ -669,13 +671,13 @@
     // 剖面图 64×64 采样较重，限制到 ~10 Hz；若处于暂停态且状态签名未变则跳过重算
     const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
     const secKey = A.STATE.playing ? (sig + '@' + Math.floor((timeSec || 0) * 10)) : sig;
-    if (secKey !== lastSecSig && nowMs - lastSectionT > 100) {
+    if ((force || secKey !== lastSecSig) && (force || nowMs - lastSectionT > 100)) {
       drawSection(timeSec);
       lastSectionT = nowMs;
       lastSecSig = secKey;
     }
     simStatus(timeSec);
-    updateDashboardReadout(timeSec);
+    updateDashboardReadout(timeSec, !!(force || paramChanged));
   }
 
   // ----------------- 高级面板绘图助手 -----------------

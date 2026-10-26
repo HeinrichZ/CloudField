@@ -448,6 +448,7 @@ if (win.Physics) {
   sc.on = save.on; sc.coverage = save.coverage; sc.density = save.density;
 }
 // LCL 使用可调干绝热直减率（默认 9.8 K/km），改参数应生效
+Amod.STATE.envT = 0; Amod.STATE.envRH = 0;
 const lclDefault = Amod.lclHeight();
 const savedDry = Amod.STATE.dryLapseRate;
 Amod.STATE.dryLapseRate = 6.5;
@@ -1204,6 +1205,15 @@ ok(hotIv.deicingRequired === true && hotIv.minMinutes > hotI.minMinutes && altSi
   'VisConv 完整支持 ICAO Doc 9640 除防冰保持时间 (HOT)、CCAR-121 备降场最低标准与单屏签派放行综合简报',
   `HOT(IV)=${hotIv.minMinutes}-${hotIv.maxMinutes}min vs HOT(I)=${hotI.minMinutes}-${hotI.maxMinutes}min, AltReq(Dual)=${altDual.requiredAltCeilingM}m/${altDual.requiredAltVisM}m, Dispatch=${dspBrief.dispatchStatus}`);
 
+Amod.deserialize(snapBefore9);
+ok(Amod.STATE.playing === true, '默认模拟状态 playing=true，打开页面即实时演进不冻结');
+win.Monitor.update(0, true);
+const dashHtml0 = byId.get('dash-readout').innerHTML;
+Amod.STATE.lifePhase = 0.45;
+win.Kessler.step(0.5, 3.0);
+win.Monitor.update(3.0, true);
+const dashHtml3 = byId.get('dash-readout').innerHTML;
+ok(dashHtml0.length > 50 && dashHtml3 !== dashHtml0, '能见度诊断仪表盘 (dash-readout) 随仿真时间实时刷新且数值动态演进');
 Amod.deserialize(snapBefore9);
 
 // ================= 汇总 =================

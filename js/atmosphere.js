@@ -49,6 +49,7 @@
     },
 
     // —— 模拟与演进 ——
+    playing: true,
     autoLife: true,
     lifeManual: 1.0,
     lifePhase: 0,
@@ -633,13 +634,17 @@
       const d2 = (h - peak) * 2.0;
       const vfall = Math.exp(-d2 * d2 * w);
       const sc = Math.max(0.02, L.scale || 0.10);
+      const invSc = 1.0 / sc;
       const det = L.detail != null ? L.detail : 0.5;
       const nx = px * sc + ty * 13.7 + 3.1, ny = (z * 0.5) * sc, nz = pz * sc + ty * 7.3 + 5.7;
-      let n = fbm(nx, ny, nz);
-      n += det * (fbm(nx * 3.1, ny * 3.1, nz * 3.1) - 0.5) * 0.6;
+      const nMacro = fbm(nx, ny, nz);
+      // 叠加尺度为 1/L.scale 的顺风平流湍流涡旋起伏（严格依赖 px = x - wx·t, pz = y - wz·t）
+      const sx = px * invSc + ty * 13.7 + 3.1, sy = (z * 0.6) * invSc, sz = pz * invSc + ty * 7.3 + 5.7;
+      const nEddy = fbm(sx, sy, sz) + det * (fbm(sx * 2.1 + 5.0, sy * 2.1, sz * 2.1) - 0.5) * 0.6;
+      let n = 0.52 * nMacro + 0.48 * nEddy;
       n = Math.max(0.0, Math.min(1.0, n));
       const thresh = 0.76 - L.coverage * 0.55;
-      const cov = smoothstep2(thresh - 0.09, thresh + 0.09, n) * (0.65 + 0.35 * n);
+      const cov = smoothstep2(thresh - 0.14, thresh + 0.18, n) * (0.45 + 0.55 * n);
       const d = cov * L.density * vfall;
       if (d > 0) {
         density += d;
@@ -793,7 +798,7 @@
     }
     const s = obj.state;
     const scalarKeys = ['surfaceTemp','surfacePressure','surfaceRH','lapseRate','dewLapse','dryLapseRate',
-      'windSpeed','windDir','sunElev','sunAz','autoLife','lifeManual','lifePhase',
+      'windSpeed','windDir','sunElev','sunAz','playing','autoLife','lifeManual','lifePhase',
       'convection','simSpeed','viewMode','sliceAlt','showSlice','tintField','tintAmt',
       'showSun','showGrid','quality','envCycle','envT','envRH','fieldBand','profileMode','thermoCoupledBase'];
     for (const k of scalarKeys) if (s[k] !== undefined) STATE[k] = s[k];

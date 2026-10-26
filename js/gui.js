@@ -293,6 +293,7 @@
     ], true));
 
     container.appendChild(advancedGroup());
+    syncPlay();
   }
 
   function exportJSON() {
