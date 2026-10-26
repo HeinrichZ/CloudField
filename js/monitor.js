@@ -67,6 +67,19 @@
         syncToggleText();
       });
     }
+    if (els.profile) {
+      els.profile.addEventListener('click', (e) => {
+        const r = els.profile.getBoundingClientRect ? els.profile.getBoundingClientRect() : { left: 0, top: 0, width: els.profile.width, height: els.profile.height };
+        const cx = (e.clientX - r.left) * (els.profile.width / Math.max(1, r.width));
+        const cy = (e.clientY - r.top) * (els.profile.height / Math.max(1, r.height));
+        if (cx >= els.profile.width - 135 && cy <= 26) {
+          A.STATE.profileMode = A.STATE.profileMode === 'skewt' ? 'tz' : 'skewt';
+          lastProfSig = '';
+          drawProfile();
+          if (global.GUI && global.GUI.build) global.GUI.build();
+        }
+      });
+    }
     if (els.dashTabs) {
       els.dashTabs.querySelectorAll('button').forEach(b => {
         b.addEventListener('click', () => {
@@ -117,40 +130,83 @@
     }
   }
 
-  // ----------------- 垂直廓线（主导读图窗口） -----------------
+  // ----------------- 垂直廓线（主导读图窗口：支持直角 T-z 廓线与气象标准 Skew-T log-p 斜温图双模式 + 顶部 LWC/f_ice 副坐标轴） -----------------
   function drawProfile() {
     const cv = els.profile, ctx = cv.getContext('2d');
     const W = cv.width, H = cv.height;
-    const padL = 34, padR = 10, padT = 10, padB = 20;
+    const isSkewT = A.STATE.profileMode === 'skewt';
+    const padL = 36, padR = isSkewT ? 36 : 12, padT = 18, padB = 20;
     const pw = W - padL - padR, ph = H - padT - padB;
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#070b15'; ctx.fillRect(0, 0, W, H);
 
-    // 温度轴按当前单位体系换算标签，坐标系不变（内部一律 °C）
-    const Tmin = -80, Tmax = 45;
-    const xOf = T => padL + (T - Tmin) / (Tmax - Tmin) * pw;
-    const yOf = z => padT + (1 - z / MAX) * ph;
+    const pBot = Math.max(500, A.pressureAt(0));
+    const pTop = Math.max(80, A.pressureAt(MAX));
+    const lnPBot = Math.log(pBot), lnPTop = Math.log(pTop);
+    const yOfZ = z => {
+      if (!isSkewT) return padT + (1 - z / MAX) * ph;
+      const p = Math.max(pTop, Math.min(pBot, A.pressureAt(z)));
+      return padT + ((lnPBot - Math.log(p)) / Math.max(1e-4, lnPBot - lnPTop)) * ph;
+    };
+    const Tmin = isSkewT ? -55 : -80, Tmax = 45;
+    const skewSlope = isSkewT ? 0.58 : 0.0;
+    const xOfTZ = (T, z) => {
+      const y = yOfZ(z);
+      const base = padL + ((T - Tmin) / (Tmax - Tmin)) * pw;
+      return base + skewSlope * (padT + ph - y);
+    };
 
+    // 高度与等压面网格线
     ctx.strokeStyle = '#1b2740'; ctx.fillStyle = '#5d6f93';
     ctx.font = '9px sans-serif'; ctx.lineWidth = 1;
     for (let z = 0; z <= MAX; z += 2) {
-      const y = yOf(z);
+      const y = yOfZ(z);
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
-      if (z % 2 === 0) ctx.fillText(U.alt(z, 0) + U.U.alt(), 4, y + 3);
+      ctx.fillText(U.alt(z, 0) + U.U.alt(), 3, y + 3);
+      if (isSkewT) {
+        const pLvl = Math.round(A.pressureAt(z));
+        ctx.fillText(pLvl + 'hPa', W - padR + 2, y + 3);
+      }
     }
+    // 等温线网格（Skew-T 模式下呈 45° 右倾斜温线）
     for (let T = -80; T <= 40; T += 20) {
-      const x = xOf(T);
-      ctx.strokeStyle = '#15203a';
-      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, H - padB); ctx.stroke();
-      ctx.fillStyle = '#5d6f93'; ctx.fillText(U.temp(T, 0), x - 8, H - 6);
+      const xBot = xOfTZ(T, 0), xTop = xOfTZ(T, MAX);
+      ctx.strokeStyle = T === 0 ? 'rgba(124,156,255,0.35)' : '#15203a';
+      ctx.beginPath(); ctx.moveTo(xBot, yOfZ(0)); ctx.lineTo(xTop, yOfZ(MAX)); ctx.stroke();
+      if (xBot >= padL - 6 && xBot <= W - padR + 6) {
+        ctx.fillStyle = '#5d6f93'; ctx.fillText(U.temp(T, 0), xBot - 8, H - 6);
+      }
     }
+    // Skew-T 模式下绘制背景干绝热线 (θ = 270..370 K)
+    if (isSkewT) {
+      ctx.strokeStyle = 'rgba(255, 180, 100, 0.12)';
+      ctx.setLineDash([2, 3]);
+      for (let theta = 260; theta <= 380; theta += 20) {
+        ctx.beginPath();
+        for (let z = 0; z <= MAX; z += 0.5) {
+          const p = A.pressureAt(z);
+          const tDryC = theta * Math.pow(p / 1000, 0.2854) - 273.15;
+          const x = xOfTZ(tDryC, z), y = yOfZ(z);
+          if (z === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+
+    // 顶部 LWC [0..1.5 g/m³] / f_ice [0..100%] 副坐标轴刻度标尺
+    ctx.fillStyle = '#36d1c4';
+    ctx.font = '9px sans-serif';
+    [0, 0.5, 1.0, 1.5].forEach(v => {
+      const xl = padL + (v / 1.5) * pw;
+      ctx.fillText(v === 0 ? 'LWC 0' : v.toFixed(1) + (v === 1.5 ? ' g/m³' : ''), Math.min(W - padR - 42, xl - 6), padT - 4);
+    });
 
     ctx.fillStyle = 'rgba(91,227,155,0.10)';
     for (let z = 0; z <= MAX; z += 0.1) {
-      // sat 只取决于温度/露点，原写法每次调用 profile() 都白跑一次 sampleFields
       if (A.tempAt(z) <= A.dewAt(z)) {
-        const y0 = yOf(z), y1 = yOf(Math.min(MAX, z + 0.1));
-        ctx.fillRect(padL, y0, pw, y1 - y0);
+        const y0 = yOfZ(z), y1 = yOfZ(Math.min(MAX, z + 0.1));
+        ctx.fillRect(padL, y1, pw, y0 - y1);
       }
     }
 
@@ -158,20 +214,23 @@
     const bandColors = ['rgba(150,200,255,0.10)','rgba(150,200,255,0.10)','rgba(180,180,200,0.10)','rgba(255,230,160,0.10)','rgba(255,160,160,0.12)'];
     layers.forEach(L => {
       ctx.fillStyle = bandColors[Math.min(4, L.type)] || 'rgba(200,200,200,0.1)';
-      ctx.fillRect(padL, yOf(L.top), pw, yOf(L.base) - yOf(L.top));
+      ctx.fillRect(padL, yOfZ(L.top), pw, yOfZ(L.base) - yOfZ(L.top));
     });
 
-    function curve(fn, color, dash) {
-      ctx.strokeStyle = color; ctx.lineWidth = 1.7; ctx.setLineDash(dash);
+    function curve(fn, color, dash, width) {
+      ctx.strokeStyle = color; ctx.lineWidth = width || 1.7; ctx.setLineDash(dash || []);
       ctx.beginPath();
       for (let z = 0; z <= MAX; z += 0.2) {
-        const y = yOf(z), x = xOf(fn(z));
+        const y = yOfZ(z), x = clamp(xOfTZ(fn(z), z), padL, W - padR);
         if (z === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.stroke(); ctx.setLineDash([]);
     }
     curve(z => A.tempAt(z), '#ff6b6b', []);
     curve(z => A.dewAt(z), '#4fd1ff', [4, 3]);
+    if (typeof A.thermoProfileAt === 'function') {
+      curve(z => A.thermoProfileAt(z).wetBulbTempC, '#5be39b', [6, 2, 2, 2], 1.2);
+    }
 
     // 叠加垂直液态/总含水量廓线 LWC(z) [0..1.5 g/m³] 与冰相质量分数 f_ice(z) [0..1]
     if (global.Physics && typeof global.Physics.detailedAt === 'function') {
@@ -180,18 +239,18 @@
       const xOfIce = f => padL + clamp(f, 0, 1) * pw;
       ctx.fillStyle = 'rgba(54, 209, 196, 0.14)';
       ctx.beginPath();
-      ctx.moveTo(padL, yOf(0));
+      ctx.moveTo(padL, yOfZ(0));
       const ptsLwc = [], ptsIce = [];
       for (let z = 0; z <= MAX + 1e-4; z += 0.25) {
         const d = global.Physics.detailedAt(0, 0, z, layers, wind, 0);
-        const y = yOf(z);
+        const y = yOfZ(z);
         const xl = xOfLwc(d.lwc);
         const fi = d.frac ? Math.max(0, 1 - (d.frac.water || 0)) : 0;
         ptsLwc.push([xl, y]);
         ptsIce.push([xOfIce(fi), y]);
         ctx.lineTo(xl, y);
       }
-      ctx.lineTo(padL, yOf(MAX));
+      ctx.lineTo(padL, yOfZ(MAX));
       ctx.closePath();
       ctx.fill();
 
@@ -215,24 +274,44 @@
 
     const mark = (z, color, text) => {
       if (!(z >= 0 && z <= MAX)) return;
-      const y = yOf(z);
+      const y = yOfZ(z);
       ctx.strokeStyle = color; ctx.setLineDash([3, 3]); ctx.lineWidth = 1.2;
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
-      ctx.setLineDash([]); ctx.fillStyle = color; ctx.fillText(text, W - 76, y - 3);
+      ctx.setLineDash([]); ctx.fillStyle = color; ctx.fillText(text, W - padR - 72, y - 3);
     };
     mark(A.lclHeight(), '#ffd166', 'LCL');
-    mark(A.freezingLevel(), '#7c9cff', '0°');
-    mark(A.STATE.sliceAlt, '#36d1c4', I18N.t('mon.sliceMark'));   // 与 3D 亮线、右侧高度轴同一高度
+    mark(A.freezingLevel(), '#7c9cff', '0°C');
+    if (typeof A.wetBulbZeroLevel === 'function') {
+      const wbz = A.wetBulbZeroLevel();
+      if (wbz > 0 && wbz < MAX && Math.abs(wbz - A.freezingLevel()) > 0.15) mark(wbz, '#5be39b', 'WBZ(Tw=0°)');
+    }
+    mark(A.STATE.sliceAlt, '#36d1c4', I18N.t('mon.sliceMark'));
 
-    // 叠加气块干/湿绝热抬升轨迹 Tp(z) 与 LFC / EL / CAPE / CIN 热力学指示
+    // 叠加气块干/湿绝热抬升轨迹 Tp(z)、正负浮力面积着色 (CAPE/CIN) 与热力学守恒量读数
     if (typeof A.parcelThermodynamics === 'function') {
       const th = A.parcelThermodynamics();
       if (th && th.parcelPath && th.parcelPath.length) {
-        ctx.strokeStyle = '#ff9f1c'; ctx.lineWidth = 1.4; ctx.setLineDash([5, 3]);
+        // 绘制 CAPE 正浮力区 (橙红半透明) 与 CIN 负浮力区 (蓝紫半透明)
+        for (let i = 0; i < th.parcelPath.length - 1; i++) {
+          const p0 = th.parcelPath[i], p1 = th.parcelPath[i + 1];
+          const y0 = yOfZ(p0.z), y1 = yOfZ(p1.z);
+          const xp0 = clamp(xOfTZ(p0.Tp, p0.z), padL, W - padR);
+          const xp1 = clamp(xOfTZ(p1.Tp, p1.z), padL, W - padR);
+          const xe0 = clamp(xOfTZ(p0.Tenv, p0.z), padL, W - padR);
+          const xe1 = clamp(xOfTZ(p1.Tenv, p1.z), padL, W - padR);
+          if (p0.Tp > p0.Tenv && p0.z >= th.lclKm) {
+            ctx.fillStyle = 'rgba(255, 159, 28, 0.16)';
+            ctx.beginPath(); ctx.moveTo(xe0, y0); ctx.lineTo(xp0, y0); ctx.lineTo(xp1, y1); ctx.lineTo(xe1, y1); ctx.closePath(); ctx.fill();
+          } else if (p0.Tp < p0.Tenv && (th.lfcKm == null || p0.z <= th.lfcKm)) {
+            ctx.fillStyle = 'rgba(79, 209, 255, 0.14)';
+            ctx.beginPath(); ctx.moveTo(xe0, y0); ctx.lineTo(xp0, y0); ctx.lineTo(xp1, y1); ctx.lineTo(xe1, y1); ctx.closePath(); ctx.fill();
+          }
+        }
+        ctx.strokeStyle = '#ff9f1c'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 3]);
         ctx.beginPath();
         for (let i = 0; i < th.parcelPath.length; i++) {
           const pt = th.parcelPath[i];
-          const x = xOf(pt.Tp), y = yOf(pt.z);
+          const x = clamp(xOfTZ(pt.Tp, pt.z), padL, W - padR), y = yOfZ(pt.z);
           if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
         }
         ctx.stroke();
@@ -241,9 +320,19 @@
         if (th.elKm != null) mark(th.elKm, '#f77f00', 'EL');
         ctx.fillStyle = '#ffd166';
         ctx.font = '10px sans-serif';
-        ctx.fillText(`CAPE ${th.capeJkg} · CIN ${th.cinJkg} J/kg · LI ${th.liftedIndex}`, padL + 6, padT + 11);
+        const thExtra = th.thetaE0K != null ? ` · θe0=${th.thetaE0K}K · Δθe=${th.deltaThetaE0to3Km >= 0 ? '+' : ''}${th.deltaThetaE0to3Km}K` : '';
+        ctx.fillText(`CAPE ${th.capeJkg} · CIN ${th.cinJkg} J/kg · LI ${th.liftedIndex}${thExtra}`, padL + 6, padT + 12);
       }
     }
+    // 右上角模式切换徽标按钮
+    const badgeTxt = isSkewT ? '📊 Skew-T log-p ⇄ T-z' : '📊 T-z 廓线 ⇄ Skew-T';
+    ctx.fillStyle = 'rgba(28, 45, 78, 0.85)';
+    ctx.fillRect(W - 128, 3, 122, 16);
+    ctx.strokeStyle = '#3b5998';
+    ctx.strokeRect(W - 128, 3, 122, 16);
+    ctx.fillStyle = '#a8c5ff';
+    ctx.font = '10px sans-serif';
+    ctx.fillText(badgeTxt, W - 122, 14);
   }
 
   // ----------------- 水平切片 -----------------
@@ -560,7 +649,7 @@
       `${S.viewMode},${S.tintField},${S.micro.effRadiusUm},${S.micro.dropConc},${S.micro.ccnCoupled ? 1 : 0},${S.micro.reMode},${S.micro.scheme},${S.micro.iceFrac},${S.micro.autoPhaseTemp ? 1 : 0},` +
       `${sp.type},${sp.re},${sp.N},${sp.veff},${sp.rg},${sp.sigmaG},${sp.measured ? sp.measured.length : 0},` +
       `${ph.water},${ph.ice},${ph.snow},${ph.graupel},${ph.hail},${ae.on ? 1 : 0},${ae.beta0},${ae.scaleH},` +
-      `${S.kessler ? (S.kessler.rainRate || 0).toFixed(2) : 0},` +
+      `${S.profileMode || 'tz'},${S.thermoCoupledBase ? 1 : 0},${S.kessler ? (S.kessler.rainRate || 0).toFixed(2) + ':' + (S.kessler.steps || 0) : 0},` +
       `${sd.on ? 1 : 0},${sd.agent},${sd.inpConc},${sd.glaciationEff},${sd.alt},${sd.x0},${sd.z0},${sd.width},${sd.diffK},${life}|${lSig}`;
   }
   function update(timeSec) {
@@ -833,7 +922,7 @@
   }
 
   global.Monitor = {
-    init, update, addSnapshot, clearSnapshots, getSnapshots: () => snapshots, setAxis, syncTabLabels,
+    init, update, drawProfile, addSnapshot, clearSnapshots, getSnapshots: () => snapshots, setAxis, syncTabLabels,
     drawCurve, drawField, drawHeatmap, drawScatter, drawTaylor, drawSchemeComparison,
   };
 })(window);

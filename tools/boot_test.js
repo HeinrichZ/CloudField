@@ -1155,6 +1155,55 @@ ok(vtkGrid.includes('# vtk DataFile Version 3.0') && vtkGrid.includes('DATASET S
   'Exporter.toVTK3D 导出兼容 ParaView / Tecplot / VisIt 的三维结构化网格 (.vtk) 标量场与风矢量场',
   `length=${vtkGrid.length} chars`);
 
+// 17) 热力学不变量 (θ/θe/θes/Tw/Tv)、LCL 云底耦合、Kessler 降水耗云反馈、Skew-T log-p 切换与民航签派放行 (HOT / 备降场 / 单屏简报)
+win.Help.applyScenario('cbstorm');
+const tp0 = Amod.thermoProfileAt(0);
+const wbz = Amod.wetBulbZeroLevel();
+const pt = Amod.parcelThermodynamics();
+ok(tp0.thetaEK > tp0.thetaK && tp0.virtualTempC >= tp0.tempC && tp0.wetBulbTempC <= tp0.tempC && tp0.wetBulbTempC >= tp0.dewC - 0.5 && isFinite(wbz) && pt.virtualTempCorrected === true && pt.thetaE0K > 300,
+  'Atmosphere.thermoProfileAt 输出 θ/θe/θes/Tw/Tv 热力学守恒量，parcelThermodynamics 采用虚温浮力修正并输出 Δθe 与 WBZ',
+  `θ0=${tp0.thetaK}K, θe0=${tp0.thetaEK}K, Tw0=${tp0.wetBulbTempC}°C, WBZ=${wbz.toFixed(2)}km, Δθe(0→3km)=${pt.deltaThetaE0to3Km}K, CAPE=${pt.capeJkg}J/kg, CIN=${pt.cinJkg}J/kg`);
+
+Amod.STATE.layers.cu.on = true;
+Amod.STATE.layers.cb.on = true;
+Amod.STATE.thermoCoupledBase = true;
+const effCoupled = Amod.effectiveLayers();
+const cuEff = effCoupled.find(l => l.key === 'cu');
+const cbEff = effCoupled.find(l => l.key === 'cb');
+const lclKm = Amod.lclHeight();
+ok(cuEff && cbEff && Math.abs(cuEff.base - lclKm) < 0.15 && Math.abs(cbEff.base - lclKm) < 0.15,
+  'STATE.thermoCoupledBase 启用后对流云 (Cu/Cb) 云底自动锚定至热力学抬升凝结高度 LCL',
+  `LCL=${lclKm.toFixed(2)}km → Cu.base=${cuEff.base.toFixed(2)}km, Cb.base=${cbEff.base.toFixed(2)}km`);
+Amod.STATE.thermoCoupledBase = false;
+
+Amod.STATE.kessler.on = true;
+Amod.STATE.kessler.washoutFeedback = true;
+Amod.STATE.kessler.qr.cb = 0.0;
+const densBeforeRain = Amod.effectiveLayers().find(l => l.key === 'cb').density;
+Amod.STATE.kessler.qr.cb = 0.0025; // 2.5 g/kg 雨水耗散
+const densAfterRain = Amod.effectiveLayers().find(l => l.key === 'cb').density;
+ok(densAfterRain < densBeforeRain && densAfterRain >= densBeforeRain * 0.20,
+  'STATE.kessler.washoutFeedback 启用后降水转化对有效云层密度产生质量守恒耗散反馈',
+  `Cb density: ${densBeforeRain.toFixed(3)} → ${densAfterRain.toFixed(3)}`);
+Amod.STATE.kessler.qr.cb = 0;
+Amod.STATE.kessler.on = false;
+
+Amod.STATE.profileMode = 'skewt';
+win.Monitor.drawProfile();
+ok(Amod.STATE.profileMode === 'skewt', 'Monitor.drawProfile 支持 Skew-T log-p 斜温图坐标模式无异常渲染');
+Amod.STATE.profileMode = 'tz';
+win.Monitor.drawProfile();
+
+win.Help.applyScenario('fzra');
+const hotIv = win.Integration.VisConv.calcHoldoverTime({ fluidType: 'TYPE_IV', runway: '36R' });
+const hotI = win.Integration.VisConv.calcHoldoverTime({ fluidType: 'TYPE_I', runway: '36R' });
+const altSingle = win.Integration.VisConv.calcAlternateMinima({ navType: 'SINGLE_NAV' });
+const altDual = win.Integration.VisConv.calcAlternateMinima({ navType: 'DUAL_NAV' });
+const dspBrief = win.Integration.VisConv.generateDispatchBriefing({ runway: '36R', fluidType: 'TYPE_IV', navType: 'DUAL_NAV' });
+ok(hotIv.deicingRequired === true && hotIv.minMinutes > hotI.minMinutes && altSingle.requiredAltVisM === altDual.requiredAltVisM + 800 && dspBrief.dispatchStatus === 'HOLD' && dspBrief.briefingText.includes('DISPATCH BRIEFING'),
+  'VisConv 完整支持 ICAO Doc 9640 除防冰保持时间 (HOT)、CCAR-121 备降场最低标准与单屏签派放行综合简报',
+  `HOT(IV)=${hotIv.minMinutes}-${hotIv.maxMinutes}min vs HOT(I)=${hotI.minMinutes}-${hotI.maxMinutes}min, AltReq(Dual)=${altDual.requiredAltCeilingM}m/${altDual.requiredAltVisM}m, Dispatch=${dspBrief.dispatchStatus}`);
+
 Amod.deserialize(snapBefore9);
 
 // ================= 汇总 =================

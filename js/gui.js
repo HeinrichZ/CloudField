@@ -220,6 +220,11 @@
       rangeCtrl(I18N.t('p.lapse'), 0, 12, 0.1, U.U.lapse(), () => S.lapseRate, v => S.lapseRate = v, x => x.toFixed(1), I18N.t('p.lapse.tip')),
       rangeCtrl(I18N.t('p.dewLapse'), 0, 4, 0.1, U.U.lapse(), () => S.dewLapse, v => S.dewLapse = v, x => x.toFixed(1), I18N.t('p.dewLapse.tip')),
       rangeCtrl(I18N.t('p.dryLapse'), 6, 12, 0.1, U.U.lapse(), () => S.dryLapseRate, v => S.dryLapseRate = v, x => x.toFixed(1), I18N.t('p.dryLapse.tip')),
+      toggleCtrl('LCL 热力学自动锚定对流云底', () => !!S.thermoCoupledBase, v => {
+        S.thermoCoupledBase = v;
+        if (v && A.syncCloudBasesToLCL) A.syncCloudBasesToLCL();
+        build();
+      }, '开启后积云 (Cu) 与积雨云 (Cb) 云底高度自动跟随抬升凝结高度 LCL 实时升降'),
       toggleCtrl(I18N.t('p.envCycle'), () => S.envCycle, v => { S.envCycle = v; if (!v) { S.envT = 0; S.envRH = 0; } }, I18N.t('p.envCycle.tip')),
       rangeCtrl(I18N.t('p.windSpeed'), 0, 30, 0.5, U.U.wind(), () => S.windSpeed, v => S.windSpeed = v, x => U.wind(x, 1), I18N.t('p.windSpeed.tip')),
       compassCtrl(I18N.t('p.windDir'), () => S.windDir, v => S.windDir = v, I18N.t('p.windDir.tip')),
@@ -242,6 +247,10 @@
         ['water', I18N.t('vm.water')], ['coverage', I18N.t('vm.coverage')],
       ], () => S.viewMode, v => S.viewMode = v, I18N.t('adv.viewMode.tip')),
       toggleCtrl(I18N.t('adv.band'), () => S.fieldBand !== false, v => S.fieldBand = v, I18N.t('adv.band.tip')),
+      selCtrl('底部探空坐标模式', [
+        ['tz', '直角 T-z 高度廓线图'],
+        ['skewt', 'Skew-T log-p 斜温图'],
+      ], () => S.profileMode || 'tz', v => S.profileMode = v, '切换正交 T-z 廓线与气象标准 45° 斜温-对数气压图'),
       selCtrl(I18N.t('adv.tintField'), [
         ['off', I18N.t('tint.off')], ['lwc', I18N.t('tint.lwc')], ['beta', I18N.t('tint.beta')], ['re', I18N.t('tint.re')], ['Nd', I18N.t('tint.Nd')],
       ], () => S.tintField, v => S.tintField = v, I18N.t('adv.tintField.tip')),
@@ -279,6 +288,7 @@
       rangeCtrl(I18N.t('seed.inp'), 5, 500, 5, 'L⁻¹', () => (S.seeding && S.seeding.inpConc) || 80, v => { if (S.seeding) S.seeding.inpConc = v; }, x => x.toFixed(0), I18N.t('seed.inp.tip')),
       rangeCtrl(I18N.t('seed.eff'), 0.1, 0.95, 0.05, '', () => (S.seeding && S.seeding.glaciationEff != null) ? S.seeding.glaciationEff : 0.85, v => { if (S.seeding) S.seeding.glaciationEff = v; }, x => x.toFixed(2), I18N.t('seed.eff.tip')),
       toggleCtrl(I18N.t('kes.on'), () => (S.kessler ? !!S.kessler.on : false), v => { if (global.Kessler) { global.Kessler.ensure(); S.kessler.on = v; } }, I18N.t('kes.on.tip')),
+      toggleCtrl('降水耗云质量守恒反馈', () => !(S.kessler && S.kessler.washoutFeedback === false), v => { if (S.kessler) S.kessler.washoutFeedback = v; }, '将自动转化与碰并生成的雨水消耗实时反馈至三维/二维云场密度，演示暖雨消散与 Albrecht 云寿命效应'),
       btn('↺ ' + I18N.t('kes.reset'), () => { if (global.Kessler) global.Kessler.reset(); notifyChange(); }, I18N.t('kes.reset.tip')),
     ], true));
 
@@ -542,7 +552,10 @@
           rows.push(card('机载 WXR (X波段)', o.radar.dBZXBand.toFixed(1) + ' dBZ · ' + o.radar.wxrColor + (o.radar.pacShadowAlert ? ' [PAC雨衰告警]' : '')));
         }
         if (o.turbulence) rows.push(card('湍流 EDR / 低空风切变', o.turbulence.edrMax.toFixed(2) + ' (' + o.turbulence.edrSeverity + ') · ' + o.turbulence.llwsKtPer100Ft + ' kt/100ft'));
-        if (o.thermo) rows.push(card('CAPE / CIN', o.thermo.capeJkg + ' / ' + o.thermo.cinJkg + ' J/kg'));
+        if (o.thermo) {
+          rows.push(card('CAPE / CIN (虚温修正)', o.thermo.capeJkg + ' / ' + o.thermo.cinJkg + ' J/kg · LI ' + o.thermo.liftedIndex));
+          rows.push(card('相当位温 θe0 / Δθe / 湿球零度层', o.thermo.thetaE0K + 'K / ' + (o.thermo.deltaThetaE0to3Km >= 0 ? '+' : '') + o.thermo.deltaThetaE0to3Km + 'K · WBZ ' + o.thermo.wetBulbZeroKm + 'km'));
+        }
         if (o.uav) rows.push(card('低空 UAV/eVTOL 适航', o.uav.status + ' · 旋翼积冰 ' + o.uav.rotorIcingIndex + ' · 电池折减 ' + o.uav.batteryDeratingPct + '% · EO/IR透过 ' + o.uav.eoirVisTrans1kmPct + '%'));
         if (o.contrail) rows.push(card('巡航凝结尾迹 (FL' + o.contrail.flightLevel + ')', (o.contrail.contrailPersistent ? '持续尾迹 (ISSR)' : (o.contrail.contrailForms ? '短时尾迹' : '不形成')) + ' · RHi ' + o.contrail.rhiPct + '% · θ=' + o.contrail.thetaK + 'K'));
         if (o.extSplit) rows.push(card(I18N.t('op.extSplit'), (o.extSplit.ratio * 100).toFixed(0) + '%'));

@@ -151,10 +151,14 @@ r_e 的单一来源由 `micro.reMode` 决定：`derived`（默认）用 `effRadi
 - **跑道三段式 RVR（TDZ / MID / END）监测**：沿 3.6 km 标准跑道轴线分别采样接地区（TDZ，$-1.5\text{ km}$）、中间段（MID，$0\text{ km}$）与停止端（END，$+1.5\text{ km}$）三组 RVR，支持局部平流雾或人工消雾作业下的非均匀跑道放行评估。
 - **ILS $3^\circ$ 进近下滑道斜程能见度（SVR）与决断高（DH）目视判定**：沿 $3^\circ$ 下滑道从机头至接地区积分斜向路径消光 $\bar{\beta}_{\text{slant}}$，计算斜程能见度 $\text{SVR}$ 与斜程 RVR，评估飞行员在决断高（CAT-I DH=60m / CAT-II DH=30m）能否建立目视参考，识别辐射浅雾假象（高空看清地面、进近入雾失明）与低碎云陷阱。
 - **跑道风分量分解与超限告警**：按跑道识别码（如 `27L` → 磁航向 $270^\circ$）分解顶风（Headwind）、顺风（Tailwind）与正侧风（Crosswind），当顺风 $>10\text{ kt}$ 或阵风侧风 $>20\text{ kt}$ 时触发超限提示。
-- **机载 X 波段气象雷达（WXR）、飞机积冰（SLD）、湍流耗散率（EDR）与低空风切变（LLWS）**：
+- **机载 X 波段气象雷达（WXR）、飞机积冰（SLD）、地面除防冰液保持时间（ICAO Doc 9640 HOT）、湍流耗散率（EDR）与低空风切变（LLWS）**：
   - 机载 X 波段（9.3 GHz，ARINC 708 四色规范）计入双程雨衰 $k_{\text{X}} = 0.014 R^{1.15}\ \text{dB/km}$ 与 PAC 强回波后方雨衰阴影告警；
   - 在 $0 \sim -38^\circ\text{C}$ 过冷温区耦合过冷水含量（SLWC）、温度收集效率与过冷大水滴（$r_e > 12\ \mu\text{m}$）碰撞放大因子，评估积冰严重度（`NONE / LIGHT / MODERATE / SEVERE`）及人工播云冰化后的积冰消减幅度；
+  - 按 **ICAO Doc 9640 / SAE ARP4737** 计算地面除防冰液（Type I 未增稠热除冰液、Type II 与 Type IV 长效增稠防冰液）在霜、冻雾、小/中雪、冻毛毛雨与轻度冻雨下的保持时间窗口（Holdover Time，HOT，分钟），并对重度冻雨或超低温（$<-28^\circ\text{C}$）给出无保持时间裕度禁飞告警；
   - 输出国际民航标准湍流涡旋耗散率 $\text{EDR}$（$\text{m}^{2/3}\text{s}^{-1}$）与 $0\text{–}500\text{ m}$ 低空垂直风切变（$\text{kt/100ft}$）。
+- **CCAR-121 / ICAO Annex 6 备降场最低标准与单屏签派放行综合简报**：
+  - 支持一套进近导航设施（在标准着陆最低标准上云高 $+120\text{ m}$、能见度 $+1600\text{ m}$）与双套独立进近导航设施（云高 $+60\text{ m}$、能见度 $+800\text{ m}$）的目的地/起飞备降场天气标准合规核算；
+  - 生成单屏签派放行与塔台管制综合简报（`RELEASE / CAUTION / HOLD`），汇总气压/密度高度、跑道风分量、三段 RVR、除防冰保持时间、备降场资质与高空积冰/颠簸限制项。
 - **低空经济（UAV / eVTOL / 播云无人机）适航与光电吊舱（EO/IR）透过率评估**：针对 $0\text{–}1000\text{ m AGL}$ 低空作业走廊，计算无除冰碳纤维旋翼积冰风险（敏感度为运输机机翼的 $2.2$ 倍）、锂电池低温可用容量折减率（$<15^\circ\text{C}$ 线性衰减，$-10^\circ\text{C}$ 约折减 $40\%$）、$1\text{ km}$ 斜距可见光（$550\text{ nm}$）与短波红外（$1550\text{ nm}$）Beer–Lambert 透过率，综合给出 `GO / CAUTION / NO-GO` 适航判据。
 - **高空巡航（FL260–FL400）Schmidt–Appleman 飞机凝结尾迹（Contrail）与静力稳定度判据**：按航空煤油（Jet-A1，$\text{EI}_{\text{H}_2\text{O}}=1.25\ \text{kg/kg}$，$Q=43.2\ \text{MJ/kg}$，推进效率 $\eta=0.35$）计算排气混合斜率 $G = \frac{\text{EI}_{\text{H}_2\text{O}} c_p p}{\varepsilon Q (1-\eta)}$（$\text{Pa/K}$）与 Schumann (1996) 临界温度 $T_{\text{LM}}$；当环境温度 $T_{\text{amb}} \le T_{\text{LM}}$ 且环境对冰相对湿度 $\text{RHi} \ge 100\%$ 时判定形成持续性人造卷云尾迹（Persistent Contrail Cirrus），同时输出巡航层位温 $\theta$ 与 Brunt–Väisälä 频率 $N_{\text{BV}} = \sqrt{\frac{g}{\theta}\frac{\partial \theta}{\partial z}}$。
 - **MATLAB / Simulink 与主流 CFD / 结冰求解器（OpenFOAM / ANSYS Fluent / FENSAP-ICE / ParaView VTK）接口**：

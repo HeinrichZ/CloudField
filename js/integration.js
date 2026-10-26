@@ -577,7 +577,216 @@
         metarGroup,
       };
     }
-    return { K_TABLE, calcCMV, rvrToVis, forbiddenCases, PRESETS, kOf, classifyMinima, currentSceneMinima, runwayWindComponents, runwayThreePointRVR };
+
+    // ICAO Doc 9640 / SAE ARP4737 地面飞机除防冰液保持时间 (Holdover Time, HOT, 分钟) 计算器
+    // 支持 Type I（未增稠热除冰液）、Type II 与 Type IV（增稠长效防冰液），按外界温度 OAT 与降水类型/强度查表
+    function calcHoldoverTime(opts) {
+      opts = opts || {};
+      const S = A.STATE;
+      const oatC = opts.oatC != null ? +opts.oatC : A.tempAt(0);
+      const fluid = String(opts.fluidType || 'TYPE_IV').toUpperCase();
+      const rainR = opts.precipRateMmH != null ? +opts.precipRateMmH : ((S.precipRateMmH != null && S.precipRateMmH > 0) ? S.precipRateMmH : ((S.kessler && S.kessler.on) ? (S.kessler.rainRate || 0) : 0));
+      const ic = (global.Physics && global.Physics.icingDiagnostics) ? global.Physics.icingDiagnostics(0) : { warmNose: false, sldRisk: false };
+      let wx = opts.wxCondition;
+      if (!wx) {
+        if (oatC > 2.5) wx = 'NONE';
+        else if (ic.warmNose && rainR > 0.2) wx = rainR >= 4.0 ? 'HEAVY_FZRA' : 'LIGHT_FZRA';
+        else if (oatC <= 0 && rainR >= 2.5) wx = 'MOD_SN';
+        else if (oatC <= 0 && rainR > 0.1) wx = 'LIGHT_SN';
+        else if (oatC <= 0 && S.surfaceRH >= 93) wx = 'FZFG';
+        else if (oatC <= 1.0 && S.surfaceRH >= 80) wx = 'FROST';
+        else wx = 'NONE';
+      }
+      if (wx === 'NONE') {
+        return { fluidType: fluid, oatC: +oatC.toFixed(1), wxCondition: 'NONE', wxLabel: '无结冰降水', deicingRequired: false, minMinutes: null, maxMinutes: null, windowStr: '无需除防冰 (无地面结冰条件)', noHoldoverAllowance: false };
+      }
+      if (wx === 'HEAVY_FZRA' || oatC < -28) {
+        return { fluidType: fluid, oatC: +oatC.toFixed(1), wxCondition: wx, wxLabel: wx, deicingRequired: true, minMinutes: 0, maxMinutes: 0, windowStr: '0 min [禁止起飞：超出防冰液保持能力包线]', noHoldoverAllowance: true };
+      }
+      // 基准保持时间表 [min, max] (分钟)：按 Type I / Type II / Type IV 与温度带 (-3°C 以上 vs -3~-14°C vs -14°C 以下)
+      const isCold = oatC < -3.0;
+      const isVeryCold = oatC < -14.0;
+      const TABLES = {
+        TYPE_I: {
+          FROST: [45, 45],
+          FZFG: isCold ? [6, 11] : [11, 17],
+          LIGHT_SN: isVeryCold ? [3, 6] : (isCold ? [6, 11] : [11, 18]),
+          MOD_SN: isVeryCold ? [2, 4] : (isCold ? [4, 8] : [6, 11]),
+          FZDZ: isCold ? [5, 9] : [9, 13],
+          LIGHT_FZRA: [4, 6],
+        },
+        TYPE_II: {
+          FROST: [360, 360],
+          FZFG: isCold ? [20, 45] : [35, 75],
+          LIGHT_SN: isVeryCold ? [12, 25] : (isCold ? [20, 40] : [35, 70]),
+          MOD_SN: isVeryCold ? [8, 15] : (isCold ? [10, 25] : [20, 40]),
+          FZDZ: isCold ? [15, 30] : [25, 50],
+          LIGHT_FZRA: isCold ? [8, 20] : [15, 30],
+        },
+        TYPE_IV: {
+          FROST: [720, 720],
+          FZFG: isCold ? [40, 95] : [75, 160],
+          LIGHT_SN: isVeryCold ? [20, 40] : (isCold ? [35, 75] : [65, 125]),
+          MOD_SN: isVeryCold ? [10, 22] : (isCold ? [20, 40] : [35, 70]),
+          FZDZ: isCold ? [25, 55] : [45, 90],
+          LIGHT_FZRA: isCold ? [15, 30] : [25, 40],
+        },
+      };
+      const tbl = TABLES[fluid] || TABLES.TYPE_IV;
+      const pair = tbl[wx] || tbl.FZFG;
+      return {
+        fluidType: fluid,
+        oatC: +oatC.toFixed(1),
+        wxCondition: wx,
+        wxLabel: wx,
+        deicingRequired: true,
+        minMinutes: pair[0],
+        maxMinutes: pair[1],
+        windowStr: `${pair[0]}–${pair[1]} min (${fluid}, OAT ${oatC.toFixed(1)}°C, ${wx})`,
+        noHoldoverAllowance: false,
+      };
+    }
+
+    // CCAR-121 / ICAO Annex 6 备降场（目的地备降场 / 起飞备降场）天气最低标准合规核算
+    // 规则：
+    //   - single_nav（一套进近导航设施）：在标准盲降/非精密着陆最低标准 (默认云高 60m, 能见度 800m) 上【云底高 +120 m (400 ft)、能见度 +1600 m】→ 需 Ceiling ≥ 180 m, VIS ≥ 2400 m
+    //   - dual_independent（两套及以上独立跑道进近导航设施）：在较高一套着陆标准上【云底高 +60 m (200 ft)、能见度 +800 m】→ 需 Ceiling ≥ 120 m, VIS ≥ 1600 m
+    function calcAlternateMinima(opts) {
+      opts = opts || {};
+      const rawNav = String(opts.navType || 'dual_independent').toLowerCase();
+      const isSingle = rawNav === 'single_nav';
+      const navType = isSingle ? 'single_nav' : 'dual_independent';
+      const baseCeilingM = opts.baseCeilingM != null ? +opts.baseCeilingM : 60;
+      const baseVisM = opts.baseVisM != null ? +opts.baseVisM : 800;
+      const scMin = currentSceneMinima();
+      const curCeilingM = opts.currentCeilingM != null ? +opts.currentCeilingM : scMin.ceilingM;
+      const curVisM = opts.currentVisM != null ? +opts.currentVisM : scMin.visM;
+      const addCeil = isSingle ? 120 : 60;
+      const addVis = isSingle ? 1600 : 800;
+      const reqDestCeilM = baseCeilingM + addCeil;
+      const reqDestVisM = baseVisM + addVis;
+      // 起飞备降场一般要求不低于该机场可用非精密/精密着陆最低标准 (Ceiling ≥ baseCeilingM, VIS ≥ baseVisM)
+      const reqTakeoffCeilM = baseCeilingM;
+      const reqTakeoffVisM = baseVisM;
+      const qualDest = curCeilingM >= reqDestCeilM && curVisM >= reqDestVisM;
+      return {
+        navType,
+        incrementRule: isSingle ? '+120m / +1600m (一套导航)' : '+60m / +800m (双套独立导航)',
+        reqDestCeilingM: reqDestCeilM,
+        reqDestVisM,
+        requiredAltCeilingM: reqDestCeilM,
+        requiredAltVisM: reqDestVisM,
+        reqTakeoffCeilingM: reqTakeoffCeilM,
+        reqTakeoffVisM,
+        curCeilingM,
+        curVisM,
+        qualifiedAsDestAlternate: qualDest,
+        qualifiesAsAlternate: qualDest,
+        qualifiedAsTakeoffAlternate: curCeilingM >= reqTakeoffCeilM && curVisM >= reqTakeoffVisM,
+        marginDestVisM: curVisM - reqDestVisM,
+        marginDestCeilingM: curCeilingM - reqDestCeilM,
+      };
+    }
+
+    // 民航签派放行与塔台管制一屏式综合评估简报 (Flight Dispatch & ATC Tower Comprehensive Briefing)
+    function generateDispatchBriefing(opts) {
+      opts = opts || {};
+      const S = A.STATE;
+      const rwy = opts.runway || '27L';
+      const fluidType = opts.fluidType || 'TYPE_IV';
+      const navType = opts.navType || 'dual_independent';
+      const sta = state.activeStation || 'ZBAA';
+      const ap = Coord.byICAO(sta) || { icao: sta, iata: '—', name: sta, elev: 35 };
+      const qnh = S.surfacePressure || 1013;
+      const tSfc = A.tempAt(0);
+      const qfe = Coord.qnhToQfe(qnh, ap.elev, tSfc);
+      const elevFt = Math.round(ap.elev / 0.3048);
+      const daInfo = Coord.densityAltitude(qnh, ap.elev, tSfc, S.surfaceRH);
+      const coldCorr = Coord.coldTempAltitudeCorrection(200, elevFt, tSfc);
+      const windKt = (S.windSpeed || 0) / 0.514444;
+      const rwWind = runwayWindComponents(rwy, S.windDir || 0, windKt, windKt);
+      const rvr3 = runwayThreePointRVR(rwy, false, 'HI_approach', 0);
+      const scMin = currentSceneMinima();
+      const gsProf = (global.Physics && global.Physics.approachSlantProfile)
+        ? global.Physics.approachSlantProfile({ rwyDesignator: rwy })
+        : { svrAtCat1DhM: scMin.visM, slantRvrAtCat1DhM: rvr3.tdzM, visualContactAtCat1Dh: rvr3.tdzM >= 550 };
+      const icDiag = (global.Physics && global.Physics.icingDiagnostics)
+        ? global.Physics.icingDiagnostics(0)
+        : { maxIndex: 0, severity: 'NONE', sldRisk: false, warmNose: false };
+      const turb = (global.Physics && global.Physics.turbulenceAndShearDiagnostics)
+        ? global.Physics.turbulenceAndShearDiagnostics(0)
+        : { edrMax: 0.05, edrSeverity: 'NONE', llwsKtPer100Ft: 1.0, llwsAlert: false, microburstRisk: false };
+      const hot = calcHoldoverTime({ fluidType });
+      const altMin = calcAlternateMinima({ navType });
+      const uav = (global.Physics && global.Physics.uavLowAltitudeAssessment) ? global.Physics.uavLowAltitudeAssessment() : null;
+
+      const restrictions = [];
+      let releaseStatus = 'RELEASE';
+      const escalate = lvl => {
+        if (lvl === 'HOLD') releaseStatus = 'HOLD';
+        else if (lvl === 'CAUTION' && releaseStatus === 'RELEASE') releaseStatus = 'CAUTION';
+      };
+      if (rwWind.tailwindWarn) { escalate('HOLD'); restrictions.push(`顺风超限 (${rwWind.tailwindKt} kt > 10 kt)`); }
+      if (rwWind.crosswindWarn) { escalate('HOLD'); restrictions.push(`侧风超限 (${rwWind.crosswindKt} kt > 20 kt)`); }
+      if (hot.noHoldoverAllowance) { escalate('HOLD'); restrictions.push(`重度冻雨/超低温无除冰保持时间裕度 (${hot.wxCondition})`); }
+      else if (hot.minMinutes != null) { escalate('CAUTION'); restrictions.push(`需执行地面除防冰 (${hot.windowStr})`); }
+      if (turb.microburstRisk) { escalate('HOLD'); restrictions.push('终端区存在强微下击暴流风险'); }
+      else if (turb.llwsAlert || turb.edrMax >= 0.35) { escalate('CAUTION'); restrictions.push(`低空风切变/中度以上颠簸 (LLWS ${turb.llwsKtPer100Ft} kt/100ft, EDR ${turb.edrMax})`); }
+      if (icDiag.sldRisk || icDiag.maxIndex >= 65) { escalate('HOLD'); restrictions.push(`空中严重过冷大水滴结冰风险 (Icing=${icDiag.maxIndex}, SLD=${icDiag.sldRisk})`); }
+      else if (icDiag.maxIndex >= 35) { escalate('CAUTION'); restrictions.push(`空中中度结冰风险 (Icing=${icDiag.maxIndex})`); }
+      if (!scMin.okCat1) { escalate('CAUTION'); restrictions.push(`低于 CAT-I 标准 (当前等级 ${scMin.category}，需备降场与 II/III 类资质)`); }
+      if (daInfo.highDaWarn) { escalate('CAUTION'); restrictions.push(`高原/高温高密度高度减载 (DA=${daInfo.densityAltFt} ft, 滑跑 +${daInfo.takeoffRollIncreasePct}%)`); }
+      if (coldCorr.needsCorrection) { restrictions.push(`严寒决断高修正 (DH 200ft → ${coldCorr.correctedDhFt}ft)`); }
+
+      const briefingText = [
+        `=== CLOUDFIELD FLIGHT DISPATCH BRIEFING [${ap.icao} RWY ${rwy}] ===`,
+        `STATUS     : ${releaseStatus}${restrictions.length ? ' (' + restrictions.length + ' ITEMS)' : ' (NORMAL)'}`,
+        `BARO / DA  : QNH ${qnh} hPa / QFE ${qfe} hPa | PA ${daInfo.pressureAltFt} ft / DA ${daInfo.densityAltFt} ft`,
+        `RWY WIND   : HDG ${rwWind.rwyHeading}° | HEAD ${rwWind.headwindKt} kt | TAIL ${rwWind.tailwindKt} kt | XWIND ${rwWind.crosswindKt} kt`,
+        `RVR & CAT  : ${rvr3.metarGroup} | CEIL ${scMin.ceilingM} m | CAT: ${scMin.category} | SVR@DH60m: ${gsProf.svrAtCat1DhM} m`,
+        `DE-ICING   : ${hot.windowStr}`,
+        `ALTERNATE  : ${altMin.qualifiedAsDestAlternate ? 'QUALIFIED' : 'BELOW MINIMA'} (REQ CEIL >= ${altMin.reqDestCeilingM}m, VIS >= ${altMin.reqDestVisM}m [${altMin.incrementRule}])`,
+        `HAZARDS    : ICING IDX ${icDiag.maxIndex} (${icDiag.severity}, SLD=${icDiag.sldRisk}) | EDR ${turb.edrMax} (${turb.edrSeverity}) | LLWS ${turb.llwsKtPer100Ft} kt/100ft`,
+        ...(restrictions.length ? ['NOTES      : ' + restrictions.join(' ; ')] : []),
+      ].join('\n');
+
+      return {
+        icao: ap.icao,
+        station: ap.icao,
+        runway: rwy,
+        airportName: Coord.airportName(ap),
+        elevM: ap.elev,
+        qnhHpa: qnh,
+        qfeHpa: qfe,
+        pressureAltFt: daInfo.pressureAltFt,
+        densityAltFt: daInfo.densityAltFt,
+        densityAlt: daInfo,
+        coldCorrection: coldCorr,
+        runwayWind: rwWind,
+        rvr: rvr3,
+        rvr3,
+        cloudCeilingM: scMin.ceilingM,
+        approachCategory: scMin.category,
+        sceneMinima: scMin,
+        approachSlant: gsProf,
+        icing: icDiag,
+        turbulence: turb,
+        holdover: hot,
+        holdoverTime: hot,
+        alternate: altMin,
+        alternateQualification: altMin,
+        uav,
+        dispatchStatus: releaseStatus,
+        releaseStatus,
+        restrictions,
+        briefingText,
+      };
+    }
+    return {
+      K_TABLE, calcCMV, rvrToVis, forbiddenCases, PRESETS, kOf,
+      classifyMinima, currentSceneMinima, runwayWindComponents, runwayThreePointRVR,
+      calcHoldoverTime, calcAlternateMinima, generateDispatchBriefing,
+    };
   })();
 
   // =====================================================================
@@ -955,6 +1164,7 @@
         <button data-tab="metar" class="active">${I18N.t('tab.metar')}</button>
         <button data-tab="vis">${I18N.t('tab.vis')}</button>
         <button data-tab="airport">${I18N.t('tab.airport')}</button>
+        <button data-tab="dispatch">🛫 签派放行总览</button>
         <button data-tab="bridge">${I18N.t('tab.bridge')}</button>
         <button data-tab="replay">${I18N.t('tab.replay')}</button>
       </div>
@@ -962,6 +1172,7 @@
         <div data-pane="metar" class="int-pane active"></div>
         <div data-pane="vis" class="int-pane"></div>
         <div data-pane="airport" class="int-pane"></div>
+        <div data-pane="dispatch" class="int-pane"></div>
         <div data-pane="bridge" class="int-pane"></div>
         <div data-pane="replay" class="int-pane"></div>
       </div>`;
@@ -969,6 +1180,7 @@
       metar: root.querySelector('[data-pane="metar"]'),
       vis: root.querySelector('[data-pane="vis"]'),
       airport: root.querySelector('[data-pane="airport"]'),
+      dispatch: root.querySelector('[data-pane="dispatch"]'),
       bridge: root.querySelector('[data-pane="bridge"]'),
       replay: root.querySelector('[data-pane="replay"]'),
     };
@@ -977,11 +1189,13 @@
         root.querySelectorAll('.int-tabs button').forEach(x => x.classList.remove('active'));
         root.querySelectorAll('.int-pane').forEach(x => x.classList.remove('active'));
         b.classList.add('active'); panes[b.dataset.tab].classList.add('active');
+        if (b.dataset.tab === 'dispatch' && panes.dispatch._refresh) panes.dispatch._refresh();
       };
     });
     buildMetarPane(panes.metar);
     buildVisPane(panes.vis);
     buildAirportPane(panes.airport);
+    buildDispatchPane(panes.dispatch);
     buildBridgePane(panes.bridge);
     buildReplayPane(panes.replay);
   }
@@ -1323,6 +1537,87 @@
     };
     slider.oninput = () => { el.querySelector('#rp-t').textContent = slider.value; Bridge.replayAt(+slider.value); };
     refresh();
+  }
+
+  function buildDispatchPane(el) {
+    el.innerHTML = `
+      <p class="int-note">面向航空公司签派员（AOC）、塔台管制（ATC）与机组放行讲解的单屏综合决策总览：自动耦合跑道三段 RVR、侧风/下击暴流、地面除防冰保持时间（ICAO Doc 9640 HOT）、CCAR-121 备降场增量最低标准与高空积冰/对流评估。</p>
+      <div class="ctrl-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px">
+        <div class="ctrl"><div class="row"><label>主用跑道编号</label></div>
+          <select id="dsp-rwy" style="width:100%">
+            <option value="36R">RWY 36R (360°)</option>
+            <option value="18L">RWY 18L (180°)</option>
+            <option value="27L">RWY 27L (270°)</option>
+            <option value="09R">RWY 09R (090°)</option>
+          </select>
+        </div>
+        <div class="ctrl"><div class="row"><label>除防冰液类型 (Doc 9640)</label></div>
+          <select id="dsp-fluid" style="width:100%">
+            <option value="TYPE_IV" selected>Type IV (长效增稠防冰液)</option>
+            <option value="TYPE_II">Type II (增稠防冰液)</option>
+            <option value="TYPE_I">Type I (未增稠热除冰液)</option>
+          </select>
+        </div>
+        <div class="ctrl"><div class="row"><label>备降场导航设施 (CCAR-121)</label></div>
+          <select id="dsp-nav" style="width:100%">
+            <option value="DUAL_NAV" selected>双套独立导航 (+60m/+800m)</option>
+            <option value="SINGLE_NAV">一套导航设施 (+120m/+1600m)</option>
+          </select>
+        </div>
+      </div>
+      <div class="btn-row wrap" style="margin-bottom:6px">
+        <button class="act" id="dsp-refresh">🔄 刷新当前场景签派放行简报</button>
+        <button class="act" id="dsp-copy">📋 复制标准签派放行电报</button>
+      </div>
+      <div id="dsp-cards" style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-bottom:8px;font-size:12px"></div>
+      <pre id="dsp-out" class="int-out" style="max-height:200px;overflow:auto;font-family:monospace"></pre>`;
+    const rwySel = el.querySelector('#dsp-rwy');
+    const fluidSel = el.querySelector('#dsp-fluid');
+    const navSel = el.querySelector('#dsp-nav');
+    const cardsEl = el.querySelector('#dsp-cards');
+    const outEl = el.querySelector('#dsp-out');
+
+    const renderBrief = () => {
+      const b = VisConv.generateDispatchBriefing({
+        runway: rwySel.value,
+        fluidType: fluidSel.value,
+        navType: navSel.value,
+      });
+      const badgeColor = b.dispatchStatus === 'HOLD' ? '#ef4444' : (b.dispatchStatus === 'CAUTION' ? '#f59e0b' : '#22c55e');
+      cardsEl.innerHTML = `
+        <div class="formula" style="border-left:3px solid ${badgeColor};padding-left:8px">
+          <b>综合签派状态：<span style="color:${badgeColor}">${b.dispatchStatus}</span></b><br>
+          机场 ${b.icao} · 跑道 ${b.runway} · 场压高度 ${b.pressureAltFt} ft / 密度高度 ${b.densityAltFt} ft
+        </div>
+        <div class="formula">
+          <b>跑道三段 RVR & 运行类别：${b.approachCategory}</b><br>
+          TDZ ${b.rvr.tdzM}m / MID ${b.rvr.midM}m / END ${b.rvr.endM}m · 云底高 ${b.cloudCeilingM}m
+        </div>
+        <div class="formula">
+          <b>地面除防冰保持时间 (HOT)：${b.holdover.wxLabel}</b><br>
+          ${b.holdover.deicingRequired ? `${b.holdover.fluidType}: <b>${b.holdover.minMinutes}–${b.holdover.maxMinutes} min</b>` : '无需地面除防冰'}
+        </div>
+        <div class="formula">
+          <b>CCAR-121 备降场资质：${b.alternate.qualifiesAsAlternate ? '<span style="color:#22c55e">合格</span>' : '<span style="color:#ef4444">不满足标准</span>'}</b><br>
+          需 MDH ≥ ${b.alternate.requiredAltCeilingM}m, VIS ≥ ${b.alternate.requiredAltVisM}m (${b.alternate.incrementRule})
+        </div>`;
+      outEl.textContent = b.briefingText;
+      return b;
+    };
+
+    el.querySelector('#dsp-refresh').onclick = renderBrief;
+    rwySel.onchange = renderBrief;
+    fluidSel.onchange = renderBrief;
+    navSel.onchange = renderBrief;
+    el.querySelector('#dsp-copy').onclick = () => {
+      const b = renderBrief();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(b.briefingText).catch(() => {});
+      }
+      outEl.textContent = b.briefingText + '\n\n[已复制到剪贴板]';
+    };
+    el._refresh = renderBrief;
+    renderBrief();
   }
 
   // initBridge：由 main.js 在启动时调用，用于可选地连接 Bridge（默认不自动连接，避免离线报错）

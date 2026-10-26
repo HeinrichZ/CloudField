@@ -58,6 +58,8 @@
     // —— 可视化与监控 ——
     viewMode: 'real',         // real|temp|pressure|water|coverage
     fieldBand: true,          // 温度/气压视图：等值带 + 等值线（俯视时也能看出空间结构）
+    profileMode: 'tz',        // 底部廓线图坐标模式：tz (直角 T-z 廓线) | skewt (气象标准 Skew-T log-p 斜温图)
+    thermoCoupledBase: false, // 热力学 LCL 自动锚定对流云 (cu/cb) 云底高度
     sliceAlt: 3.0,
     showSlice: true,          // 3D 云场里的剖面高度亮线
     tintField: 'off',         // 微物理着色叠加：off|lwc|beta|re|Nd
@@ -119,6 +121,7 @@
     // —— Kessler / 多方案单柱预报状态（q_c / q_r，按层，kg/kg）——
     kessler: {
       on: true,
+      washoutFeedback: true,  // 降水耗云质量守恒反馈：自动转化与碰并消耗的云水实时削减三维/二维云层有效密度
       qc: { ci: 0, cs: 0, sc: 0, cu: 0, cb: 0 },
       qr: { ci: 0, cs: 0, sc: 0, cu: 0, cb: 0 },
       qi: { ci: 0, cs: 0, sc: 0, cu: 0, cb: 0 },
@@ -245,18 +248,114 @@
     };
   }
   function freezingLevel() {
+    if (canUseSoundingProfile()) {
+      for (let z = 0; z <= 12; z += 0.1) {
+        if (tempAt(z) <= 0) return +z.toFixed(2);
+      }
+    }
     const T0 = surfaceTempEff();
     if (STATE.lapseRate <= 0) return T0 <= 0 ? 0 : 999;
     return Math.max(0, T0 / STATE.lapseRate);
   }
 
-  // 气块干/湿绝热抬升热力学诊断：计算气块状态曲线 Tp(z)、抬升凝结高度 LCL、自由对流高度 LFC、平衡高度 EL、对流有效位能 CAPE (J/kg)、对流抑制能量 CIN (J/kg) 与抬升指数 LI
+  // 大气热力学核心守恒/准守恒特征量诊断（Bolton 1980 精确公式 + Normand/Stull 湿球温度）：
+  // 输出虚温 Tv(°C)、湿球温度 Tw(°C)、位温 θ(K)、相当位温 θe(K)、饱和相当位温 θes(K)、水汽混合比 rv(g/kg) 与饱和混合比 rs(g/kg)
+  function thermoProfileAt(z) {
+    const zz = Math.max(0, z || 0);
+    const T = tempAt(zz);
+    const Td = Math.min(T, dewAt(zz));
+    const p = Math.max(20, pressureAt(zz));
+    const Tk = T + 273.15;
+    const Tdk = Math.max(150, Td + 273.15);
+    const es = 6.112 * Math.exp((17.67 * T) / (T + 243.5));
+    const e = Math.min(es, 6.112 * Math.exp((17.67 * Td) / (Td + 243.5)));
+    const rhPct = Math.max(0.5, Math.min(100, (e / Math.max(1e-6, es)) * 100));
+    const qv = (0.622 * e) / Math.max(10, p - 0.378 * e);       // kg/kg
+    const qs = (0.622 * es) / Math.max(10, p - 0.378 * es);     // kg/kg
+    const rvGkg = qv * 1000;                                    // g/kg
+    const rsGkg = qs * 1000;                                    // g/kg
+    // 虚温 Tv (°C)：计入水汽分子量小于干空气导致的浮力增幅
+    const tvK = Tk * (1 + 0.608 * qv);
+    const virtualTempC = +(tvK - 273.15).toFixed(2);
+    // 湿球温度 Tw (°C)：先由 Stull (2011) 经验式初猜，再用干湿球方程迭代 2 步以兼容高空低气压
+    let tw = T * Math.atan(0.151977 * Math.pow(rhPct + 8.313659, 0.5))
+      + Math.atan(T + rhPct) - Math.atan(rhPct - 1.676331)
+      + 0.00391838 * Math.pow(rhPct, 1.5) * Math.atan(0.023101 * rhPct) - 4.686035;
+    tw = Math.max(Td, Math.min(T, tw));
+    const gammaPsychro = 0.000662 * p;
+    for (let it = 0; it < 2; it++) {
+      const esTw = 6.112 * Math.exp((17.67 * tw) / (tw + 243.5));
+      const dEs = (4302.645 * esTw) / Math.pow(tw + 243.5, 2);
+      const f = esTw - e + gammaPsychro * (tw - T);
+      tw -= f / Math.max(1e-4, dEs + gammaPsychro);
+      tw = Math.max(Td, Math.min(T, tw));
+    }
+    const wetBulbTempC = +tw.toFixed(2);
+    // Bolton (1980, MWR Eq. 15, 38, 39) 凝结高度温度 T_LCL (K)、位温 θ (K)、相当位温 θ_e (K) 与饱和相当位温 θ_es (K)
+    const thetaDryK = Tk * Math.pow(1000 / p, 0.2854 * (1 - 0.28e-3 * rvGkg));
+    const tLclK = 1 / (1 / (Tdk - 56) + Math.log(Tk / Tdk) / 800) + 56;
+    const thetaEK = thetaDryK * Math.exp((3.376 / tLclK - 0.00254) * rvGkg * (1 + 0.81e-3 * rvGkg));
+    const thetaEsK = Tk * Math.pow(1000 / p, 0.2854 * (1 - 0.28e-3 * rsGkg))
+      * Math.exp((3.376 / Tk - 0.00254) * rsGkg * (1 + 0.81e-3 * rsGkg));
+    return {
+      zKm: zz,
+      tempC: +T.toFixed(2),
+      dewC: +Td.toFixed(2),
+      virtualTempC,
+      wetBulbTempC,
+      pressureHpa: +p.toFixed(2),
+      rhPct: +rhPct.toFixed(1),
+      rvGkg: +rvGkg.toFixed(2),
+      rsGkg: +rsGkg.toFixed(2),
+      thetaK: +thetaDryK.toFixed(2),
+      thetaEK: +thetaEK.toFixed(2),
+      thetaEsK: +thetaEsK.toFixed(2),
+    };
+  }
+
+  // 湿球零度层高度 (Wet-Bulb Zero Level, WBZ, Tw = 0°C)：决定降雪融化层与冻雨过冷层的真实相变边界
+  function wetBulbZeroLevel() {
+    const tw0 = thermoProfileAt(0).wetBulbTempC;
+    if (tw0 <= 0) return 0;
+    let prevZ = 0, prevTw = tw0;
+    for (let z = 0.2; z <= 12.0; z = +(z + 0.2).toFixed(2)) {
+      const tw = thermoProfileAt(z).wetBulbTempC;
+      if (tw <= 0) {
+        const frac = (prevTw - 0) / Math.max(1e-4, prevTw - tw);
+        return +(prevZ + frac * 0.2).toFixed(2);
+      }
+      prevZ = z;
+      prevTw = tw;
+    }
+    return 999;
+  }
+
+  // 一键将对流云 (cu / cb) 的云底高度同步锚定至当前热力学抬升凝结高度 LCL
+  function syncCloudBasesToLCL() {
+    const zLcl = Math.max(0.15, Math.min(5.0, +lclHeight().toFixed(2)));
+    ['cu', 'cb'].forEach(k => {
+      const L = STATE.layers && STATE.layers[k];
+      if (L) {
+        L.base = zLcl;
+        if (L.top < L.base + 0.6) L.top = +(L.base + (k === 'cb' ? 6.0 : 2.2)).toFixed(2);
+      }
+    });
+    return zLcl;
+  }
+
+  // 气块干/湿绝热抬升热力学诊断（含虚温 Tv 浮力修正与真实地面逆温盖 CIN）：
+  // 计算气块状态曲线 Tp(z)、Tvp(z)、抬升凝结高度 LCL、自由对流高度 LFC、平衡高度 EL、CAPE (J/kg)、CIN (J/kg)、LI、θe(0) 与位势不稳定指数 Δθe(0→3km)
   function parcelThermodynamics(opts) {
     opts = opts || {};
     const gammaD = Math.max(4, STATE.dryLapseRate || 9.8); // K/km
     const zLcl = lclHeight();
-    const convExcess = opts.deltaT != null ? opts.deltaT : (2.2 * Math.max(0, (STATE.convection || 0) / 100));
-    const Tp0 = tempAt(0) + convExcess;
+    const th0 = thermoProfileAt(0);
+    const th3 = thermoProfileAt(3.0);
+    const qv0 = (th0.rvGkg || 0) * 1e-3;
+    // 地面气块从真实地面温度起抬（保留 LCL 附近真实的负浮力对流抑制能 CIN），对流加热仅作为云内潜热/上升羽流扰动生效
+    const sfcDeltaT = opts.deltaT != null ? +opts.deltaT : 0;
+    const convBoost = 1.6 * Math.max(0, (STATE.convection || 0) / 100);
+    const Tp0 = tempAt(0) + sfcDeltaT;
     const dzKm = 0.2;
     const dzM = dzKm * 1000;
     const Lv = 2.501e6, Cp = 1004, eps = 0.622;
@@ -268,8 +367,11 @@
     const parcelPath = [];
 
     for (let z = 0; z <= MAX_ALT + 1e-6; z = +(z + dzKm).toFixed(2)) {
-      const Tenv = tempAt(z);
-      const pHpa = pressureAt(z);
+      const thEnv = thermoProfileAt(z);
+      const Tenv = thEnv.tempC;
+      const TvEnv = thEnv.virtualTempC;
+      const pHpa = thEnv.pressureHpa;
+      let qvParcel = qv0;
       if (z === 0) {
         Tp = Tp0;
       } else if (z <= zLcl) {
@@ -278,19 +380,34 @@
         const Tk = Tp + 273.15;
         const es = esWater(Tp);
         const rs = eps * es / Math.max(10, pHpa - es);
+        qvParcel = rs;
         const num = 1 + (Lv * rs) / (R * Tk);
         const den = 1 + (eps * Lv * Lv * rs) / (Cp * R * Tk * Tk);
         const gammaM = Math.max(3.2, Math.min(gammaD, gammaD * (num / den))); // K/km
         Tp = Tp - gammaM * dzKm;
       }
-      parcelPath.push({ z, Tp: +Tp.toFixed(2), Tenv: +Tenv.toFixed(2) });
+      // 云内对流热泡浮力增幅仅在越过 LCL 凝结高度后随高度渐进释放，不破坏云下 CIN 逆温层
+      const inCloudBoost = z > zLcl ? convBoost * Math.min(1, (z - zLcl) / 0.8) : 0;
+      const TpEff = Tp + inCloudBoost;
+      const TvParcel = ((TpEff + 273.15) * (1 + 0.608 * qvParcel)) - 273.15;
+      parcelPath.push({
+        z,
+        pHpa,
+        Tp: +TpEff.toFixed(2),
+        Tvp: +TvParcel.toFixed(2),
+        Tenv: +Tenv.toFixed(2),
+        TvEnv: +TvEnv.toFixed(2),
+        thetaEK: thEnv.thetaEK,
+        wetBulbC: thEnv.wetBulbTempC,
+      });
       if (Math.abs(z - 5.4) < 0.11) {
-        tpAt55 = Tp;
+        tpAt55 = TpEff;
         tEnvAt55 = Tenv;
       }
-      const buoy = G * ((Tp - Tenv) / (Tenv + 273.15)); // m/s²
+      // 严格采用虚温 Tv 计算阿基米德浮力 B = g · (Tv_p - Tv_env) / Tv_env,K
+      const buoy = G * ((TvParcel - TvEnv) / (TvEnv + 273.15)); // m/s²
       if (z >= zLcl) {
-        if (Tp > Tenv) {
+        if (TvParcel > TvEnv) {
           if (lfcKm === null) {
             lfcKm = z;
             passedLfc = true;
@@ -300,11 +417,12 @@
         } else if (!passedLfc && z <= 6.0) {
           cin += Math.abs(buoy) * dzM;
         }
-      } else if (!passedLfc && Tp < Tenv) {
+      } else if (!passedLfc && TvParcel < TvEnv && z > 0) {
         cin += Math.abs(buoy) * dzM;
       }
     }
     const liftedIndex = (tEnvAt55 != null && tpAt55 != null) ? +(tEnvAt55 - tpAt55).toFixed(1) : 0;
+    const deltaThetaE0to3Km = +(th3.thetaEK - th0.thetaEK).toFixed(2);
     return {
       lclKm: +zLcl.toFixed(2),
       lfcKm: lfcKm != null ? +lfcKm.toFixed(2) : null,
@@ -312,6 +430,13 @@
       capeJkg: Math.round(cape),
       cinJkg: Math.round(cin),
       liftedIndex,
+      virtualTempCorrected: true,
+      theta0K: th0.thetaK,
+      thetaE0K: th0.thetaEK,
+      wetBulbSfcC: th0.wetBulbTempC,
+      wetBulbZeroKm: wetBulbZeroLevel(),
+      deltaThetaE0to3Km,
+      potentiallyUnstable: deltaThetaE0to3Km < -1.0,
       parcelPath,
     };
   }
@@ -409,21 +534,33 @@
     return seedingPlumeAt(x, y, z).iceBoost;
   }
 
-  // ============ 云层有效范围（随对流/生消变化）============
+  // ============ 云层有效范围（随对流/生消变化、LCL 云底耦合及 Kessler 降水耗云质量守恒反馈）============
   function effectiveLayers() {
     const life = STATE.autoLife ? (0.5 + 0.5 * Math.sin(STATE.lifePhase)) : STATE.lifeManual;
     const conv = STATE.convection / 100;
+    const zLcl = STATE.thermoCoupledBase ? Math.max(0.15, Math.min(5.0, lclHeight())) : null;
+    const kes = STATE.kessler;
+    const useWashout = !!(kes && kes.on && kes.washoutFeedback !== false);
     return LAYER_ORDER.filter(k => STATE.layers[k].on).map(k => {
       const L = STATE.layers[k];
-      let top = L.top, base = L.base;
+      const isCoupledConv = zLcl != null && (k === 'cu' || k === 'cb');
+      const baseAnchor = isCoupledConv ? zLcl : L.base;
+      let top = L.top;
+      if (isCoupledConv && top < baseAnchor + 0.4) top = baseAnchor + (k === 'cb' ? 5.0 : 1.8);
       if (k === 'cu' || k === 'cb') {
         const grow = 1 + conv * (k === 'cb' ? 2.6 : 1.2) * life;
-        top = Math.min(15, L.base + (L.top - L.base) * grow);
+        top = Math.min(15, baseAnchor + (top - baseAnchor) * grow);
       }
-      const effBase = Math.max(0, L.base);
+      const effBase = Math.max(0, baseAnchor);
       const effScale = Math.max(0.02, L.scale);
       const lifeMod = 0.78 + 0.30 * life;
-      const densMod = 0.85 + 0.25 * life;
+      let densMod = 0.85 + 0.25 * life;
+      if (useWashout) {
+        const qrL = (kes.qr && kes.qr[k]) || 0;
+        const qiL = (kes.qi && kes.qi[k]) || 0;
+        const washoutFac = Math.max(0.25, 1 - 150 * qrL - 90 * qiL);
+        densMod *= washoutFac;
+      }
       return {
         key: k, base: effBase, top,
         coverage: Math.min(1, L.coverage * lifeMod),
@@ -658,7 +795,7 @@
     const scalarKeys = ['surfaceTemp','surfacePressure','surfaceRH','lapseRate','dewLapse','dryLapseRate',
       'windSpeed','windDir','sunElev','sunAz','autoLife','lifeManual','lifePhase',
       'convection','simSpeed','viewMode','sliceAlt','showSlice','tintField','tintAmt',
-      'showSun','showGrid','quality','envCycle','envT','envRH','fieldBand'];
+      'showSun','showGrid','quality','envCycle','envT','envRH','fieldBand','profileMode','thermoCoupledBase'];
     for (const k of scalarKeys) if (s[k] !== undefined) STATE[k] = s[k];
     if (s.layers) for (const k of LAYER_ORDER) if (s.layers[k]) Object.assign(STATE.layers[k], s.layers[k]);
     if (s.micro) Object.assign(STATE.micro, s.micro);
@@ -781,7 +918,8 @@
   global.Atmosphere = {
     APP_NAME, SNAPSHOT_VERSION, CLOUD_META, LAYER_ORDER, STATE, SCHEME_LABELS,
     LWC_MAX, KOSCHMEIER_EPS, RHO_W, MAX_ALT, WIND_SCALE,
-    lclHeight, tempAt, dewAt, dewpointFromRH, pressureAt, airDensityAt, windProfileAt, freezingLevel, parcelThermodynamics,
+    lclHeight, tempAt, dewAt, dewpointFromRH, pressureAt, airDensityAt, windProfileAt,
+    freezingLevel, thermoProfileAt, wetBulbZeroLevel, syncCloudBasesToLCL, parcelThermodynamics,
     esWater, esIce, wbfVaporDiff, operativeDropConc,
     iceFractionAt, seedingPlumeAt, seedingDepletionAt, seedingIceBoostAt,
     effectiveLayers, sampleFields,
