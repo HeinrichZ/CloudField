@@ -83,6 +83,11 @@
     if (els.dashTabs) {
       els.dashTabs.querySelectorAll('button').forEach(b => {
         b.addEventListener('click', () => {
+          const body = document.getElementById('dash-body');
+          if (body && body.classList.contains('collapsed')) {
+            body.classList.remove('collapsed');
+            syncToggleText();
+          }
           els.dashTabs.querySelectorAll('button').forEach(x => x.classList.remove('active'));
           b.classList.add('active');
           document.querySelectorAll('#dash-body .tab-pane').forEach(p => {
@@ -625,12 +630,26 @@
     drawDashboard();
   }
 
-  function addSnapshot(rec) {
-    const colors = ['#ffd166', '#ff8fa3', '#8fd3ff', '#b5e48c', '#d3b5ff'];
-    snapshots.push({ label: rec.label, vis: rec.vis, color: colors[snapshots.length % colors.length] });
-    if (snapshots.length > 6) snapshots.shift();
+  function renderSnapshots() {
+    if (!els.dashSnapshots) return;
+    els.dashSnapshots.innerHTML = snapshots.length
+      ? snapshots.map(s => `<span class="snap" style="border-color:${s.color}">${s.label}: ${fmtVis(s.vis)}</span>`).join('')
+      : `<span class="snap muted">${I18N.t('dash.snapEmpty')}</span>`;
   }
-  function clearSnapshots() { snapshots = []; }
+
+  function addSnapshot(rec, visArg) {
+    const item = (rec && typeof rec === 'object') ? rec : { label: String(rec || 'S'), vis: visArg };
+    const colors = ['#ffd166', '#ff8fa3', '#8fd3ff', '#b5e48c', '#d3b5ff'];
+    snapshots.push({ label: item.label, vis: item.vis, color: colors[snapshots.length % colors.length] });
+    if (snapshots.length > 6) snapshots.shift();
+    renderSnapshots();
+    drawDashboard();
+  }
+  function clearSnapshots() {
+    snapshots = [];
+    renderSnapshots();
+    drawDashboard();
+  }
 
   let lastSectionT = -1;
   function stateSig() {

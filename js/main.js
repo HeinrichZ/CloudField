@@ -267,9 +267,20 @@
 
   // ---------------- 探空验证弹窗 ----------------
   function showValidation() {
-    const rows = A.validateAgainstRadiosonde();
+    const sonde = A.getRadiosonde ? A.getRadiosonde() : A.RADIOSONDE_SAMPLE;
+    const rows = A.validateAgainstRadiosonde(sonde);
     const clear = I18N.t('val.clear');
+    const csvSample = (sonde && Array.isArray(sonde.data))
+      ? sonde.data.map(r => `${r[0]}, ${r[1]}, ${r[2]}, ${r[3]}`).join('\n')
+      : '';
     let html = `<p>${I18N.t('val.intro')}</p>
+      <div style="margin:6px 0">
+        <textarea id="modal-sonde-ta" rows="4" placeholder="z(km), p(hPa), T(°C), Td(°C)">${csvSample}</textarea>
+        <div class="btn-row wrap">
+          <button class="act" id="modal-sonde-apply">${I18N.t('tb.import')}</button>
+          <button class="act" id="modal-sonde-reset">↺ ${I18N.t('ts.default')}</button>
+        </div>
+      </div>
       <table><thead><tr><th>${I18N.t('val.th.z')}</th><th>${I18N.t('val.th.p')}</th><th>${I18N.t('val.th.T')}</th><th>${I18N.t('val.th.Td')}</th><th>${I18N.t('val.th.vis')}</th><th>${I18N.t('val.th.lwc')}</th></tr></thead><tbody>`;
     rows.forEach(r => {
       const vis = r.modelVis == null ? clear : (r.modelVis >= 1000 ? (r.modelVis / 1000).toFixed(2) + 'km' : r.modelVis.toFixed(0) + 'm');
@@ -278,7 +289,30 @@
     });
     html += `</tbody></table>
       <p class="warn">${I18N.t('val.note')}</p>`;
-    const body = document.getElementById('validate-body'); if (body) body.innerHTML = html;
+    const body = document.getElementById('validate-body');
+    if (body) {
+      body.innerHTML = html;
+      const btnApply = body.querySelector('#modal-sonde-apply');
+      const btnReset = body.querySelector('#modal-sonde-reset');
+      const ta = body.querySelector('#modal-sonde-ta');
+      if (btnApply && ta) {
+        btnApply.onclick = () => {
+          const res = A.importRadiosonde(ta.value, { assimilate: true });
+          if (!res.ok) { alert(res.msg); return; }
+          if (global.GUI && global.GUI.refreshAll) global.GUI.refreshAll();
+          onParamChange();
+          showValidation();
+        };
+      }
+      if (btnReset) {
+        btnReset.onclick = () => {
+          A.resetRadiosonde();
+          if (global.GUI && global.GUI.refreshAll) global.GUI.refreshAll();
+          onParamChange();
+          showValidation();
+        };
+      }
+    }
     const m = document.getElementById('validate-modal'); if (m) m.classList.remove('hidden');
   }
 

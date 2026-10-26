@@ -895,17 +895,22 @@
     const layers = effectiveLayers();
     const wind = { x: STATE.windSpeed, dir: STATE.windDir };
     const hasDetailed = !!(global.Physics && typeof global.Physics.detailedAt === 'function');
+    const pts = [[0, 0], [-6, -6], [6, 6], [-6, 6], [6, -6]];
     return src.data.map(row => {
       const z = row[0], p = row[1], T = row[2], Td = row[3];
-      let lwc, beta;
-      if (hasDetailed) {
-        const d = global.Physics.detailedAt(0, 0, z, layers, wind, 0);
-        lwc = d.lwc;
-        beta = d.betaExt;
-      } else {
-        const f = sampleFields(0, 0, z, layers, wind, 0);
-        lwc = f.lwc;
-        beta = extinctionFromLWC(f.lwc, operativeRe(f.lwc));
+      let lwc = 0, beta = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const px = pts[i][0], py = pts[i][1];
+        if (hasDetailed) {
+          const d = global.Physics.detailedAt(px, py, z, layers, wind, 0);
+          if (d.lwc > lwc) lwc = d.lwc;
+          if (d.betaExt > beta) beta = d.betaExt;
+        } else {
+          const f = sampleFields(px, py, z, layers, wind, 0);
+          const b = extinctionFromLWC(f.lwc, operativeRe(f.lwc));
+          if (f.lwc > lwc) lwc = f.lwc;
+          if (b > beta) beta = b;
+        }
       }
       const vis = visibilityFromExt(beta);
       const dtd = Math.max(0, T - Td);

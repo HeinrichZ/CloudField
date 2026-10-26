@@ -36,8 +36,8 @@
     R.events.push({ t: Date.now(), label: label || 'change', patch: capture() });
   }
   function start() { R.recording = true; R.events = []; record('record-start'); }
-  function stop() { R.recording = false; record('record-end'); }
-  function clear() { R.events = []; }
+  function stop() { if (R.recording) record('record-end'); R.recording = false; }
+  function clear() { if (R.timer) { clearInterval(R.timer); R.timer = null; } R.events = []; }
   function count() { return R.events.length; }
 
   function apply(patch) { P.applyStatePatch(patch); }

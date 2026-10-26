@@ -25,16 +25,22 @@
     convective:{ water: 0.35, ice: 0.25, snow: 0.1, graupel: 0.2, hail: 0.1 },
   };
 
+  function syncMicroIce() {
+    if (S.micro) S.micro.iceFrac = Math.max(0, Math.min(1, 1 - (S.phases.water || 0)));
+  }
+
   function set(presetName) {
     const p = PRESETS[presetName];
     if (!p) return false;
     ORDER.forEach(k => { S.phases[k] = p[k] || 0; });
+    syncMicroIce();
     return true;
   }
   function normalize() {
     let sum = ORDER.reduce((s, k) => s + Math.max(0, S.phases[k] || 0), 0);
-    if (sum <= 0) { S.phases.water = 1; return; }
+    if (sum <= 0) { S.phases.water = 1; syncMicroIce(); return; }
     ORDER.forEach(k => { S.phases[k] = Math.max(0, S.phases[k] || 0) / sum; });
+    syncMicroIce();
   }
   function current() {
     const o = {};

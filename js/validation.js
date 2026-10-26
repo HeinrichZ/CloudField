@@ -56,15 +56,17 @@
     const layers = A.effectiveLayers();
     const wind = { x: A.STATE.windSpeed, dir: A.STATE.windDir };
     const hasDetailed = !!(global.Physics && typeof global.Physics.detailedAt === 'function');
+    const pts = [[0, 0], [-6, -6], [6, 6], [-6, 6], [6, -6]];
     const visPairs = [], tPairs = [];
     src.data.forEach(row => {
       const z = row[0], T = row[2], Td = row[3];
-      let beta;
-      if (hasDetailed) {
-        beta = global.Physics.detailedAt(0, 0, z, layers, wind, 0).betaExt;
-      } else {
-        const f = A.sampleFields(0, 0, z, layers, wind, 0);
-        beta = A.extinctionFromLWC(f.lwc, A.operativeRe(f.lwc));
+      let beta = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const px = pts[i][0], py = pts[i][1];
+        const b = hasDetailed
+          ? global.Physics.detailedAt(px, py, z, layers, wind, 0).betaExt
+          : A.extinctionFromLWC(A.sampleFields(px, py, z, layers, wind, 0).lwc, A.operativeRe(A.sampleFields(px, py, z, layers, wind, 0).lwc));
+        if (b > beta) beta = b;
       }
       const vis = A.visibilityFromExt(beta);
       const obsVis = obsVisFromSoundingRow(z, T, Td);

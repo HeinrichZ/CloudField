@@ -25,7 +25,11 @@
     if (S.thermoCoupledBase && A.syncCloudBasesToLCL) A.syncCloudBasesToLCL();
     syncValues();
     if (global.__cf && global.__cf.onChange) global.__cf.onChange();
-    if (global.Recorder && global.Recorder.R && global.Recorder.R.recording) global.Recorder.record('param');
+    if (global.Recorder && global.Recorder.R && global.Recorder.R.recording) {
+      global.Recorder.record('param');
+      const recEl = document.getElementById('rec-status');
+      if (recEl) recEl.textContent = I18N.t('rec.count', { n: global.Recorder.count() });
+    }
   }
 
   // 通用 range 控件：标签 + 实时数值回显 + 单位 + 有效范围
@@ -64,6 +68,7 @@
     const cb = wrap.querySelector('input');
     cb.addEventListener('change', () => { set(cb.checked); notifyChange(); });
     wrap._set = () => { cb.checked = get(); };
+    syncedCtrls.push(wrap);
     return wrap;
   }
   function selCtrl(label, options, get, set, tip) {
@@ -74,6 +79,8 @@
     wrap.innerHTML = `<div class="row"><label>${label}</label></div><select>${opts}</select>`;
     const sel = wrap.querySelector('select');
     sel.addEventListener('change', () => { set(sel.value); notifyChange(); });
+    wrap._set = () => { const v = get(); if (v !== undefined) sel.value = v; };
+    syncedCtrls.push(wrap);
     return wrap;
   }
 
@@ -160,6 +167,7 @@
       window.addEventListener('touchend', onTouchEnd);
     }, { passive: false });
     wrap._set = show;
+    syncedCtrls.push(wrap);
     return wrap;
   }
 
@@ -201,7 +209,9 @@
     tb.appendChild(mk(I18N.t('tb.resetParams'), I18N.t('tb.resetParams.tip'), () => resetParams()));
     tb.appendChild(mk(I18N.t('tb.snapshot'), I18N.t('tb.snapshot.tip'), () => {
       const t = (global.__cf && global.__cf.getTime) ? global.__cf.getTime() : 0;
-      const wv = A.worstVisibility(A.effectiveLayers(), { x: S.windSpeed, dir: S.windDir }, t);
+      const wv = (global.Physics && global.Physics.worstVisibilityDetailed)
+        ? global.Physics.worstVisibilityDetailed(t)
+        : A.worstVisibility(A.effectiveLayers(), { x: S.windSpeed, dir: S.windDir }, t);
       global.Monitor.addSnapshot({ label: 'S' + (global.Monitor.getSnapshots().length + 1), vis: wv.vis });
     }));
     tb.appendChild(mk(I18N.t('tb.export'), I18N.t('tb.export.tip'), () => exportJSON()));
@@ -373,27 +383,43 @@
   function advancedGroup() {
     const sp = S.spectrum, ph = S.phases, ae = S.aerosol;
     const ctrls = [];
-    ctrls.push(selCtrl(I18N.t('spec.type'), [['gamma', I18N.t('spec.gamma')], ['lognormal', I18N.t('spec.lognormal')], ['measured', I18N.t('spec.measured')]], () => sp.type, v => sp.type = v, I18N.t('spec.title')));
-    ctrls.push(rangeCtrl(I18N.t('spec.re'), 2, 30, 0.5, 'µm', () => sp.re, v => sp.re = v, x => x.toFixed(1), I18N.t('spec.title')));
-    ctrls.push(rangeCtrl(I18N.t('spec.N'), 10, 1000, 10, 'cm⁻³', () => sp.N, v => sp.N = v, x => x.toFixed(0), I18N.t('spec.title')));
-    ctrls.push(rangeCtrl(I18N.t('spec.veff'), 0, 0.5, 0.01, '', () => sp.veff, v => sp.veff = v, x => x.toFixed(2), I18N.t('spec.title')));
-    ctrls.push(rangeCtrl(I18N.t('spec.rg'), 2, 30, 0.5, 'µm', () => sp.rg, v => sp.rg = v, x => x.toFixed(1), I18N.t('spec.title')));
-    ctrls.push(rangeCtrl(I18N.t('spec.sigmaG'), 1.05, 2.5, 0.01, '', () => sp.sigmaG, v => sp.sigmaG = v, x => x.toFixed(2), I18N.t('spec.title')));
+    const updateSpecMoments = (suffix) => {
+      if (!global.Spectrum || !global.Spectrum.moments) return;
+      const m = global.Spectrum.moments();
+      const el = document.getElementById('spec-moments');
+      if (el) el.textContent = 'N=' + m.N.toFixed(0) + '  re=' + m.re.toFixed(1) + 'µm  ν_eff=' + (m.veff != null ? m.veff.toFixed(2) : sp.veff.toFixed(2)) + '  LWC=' + m.LWCgm3.toFixed(2) + 'g/m³' + (suffix ? ' ' + suffix : '');
+    };
+    ctrls.push(selCtrl(I18N.t('spec.type'), [['gamma', I18N.t('spec.gamma')], ['lognormal', I18N.t('spec.lognormal')], ['measured', I18N.t('spec.measured')]], () => sp.type, v => { sp.type = v; updateSpecMoments(); }, I18N.t('spec.title')));
+    ctrls.push(rangeCtrl(I18N.t('spec.re'), 2, 30, 0.5, 'µm', () => sp.re, v => { sp.re = v; S.micro.effRadiusUm = v; updateSpecMoments(); }, x => x.toFixed(1), I18N.t('spec.title')));
+    ctrls.push(rangeCtrl(I18N.t('spec.N'), 10, 1000, 10, 'cm⁻³', () => sp.N, v => { sp.N = v; S.micro.dropConc = v; updateSpecMoments(); }, x => x.toFixed(0), I18N.t('spec.title')));
+    ctrls.push(rangeCtrl(I18N.t('spec.veff'), 0, 0.5, 0.01, '', () => sp.veff, v => { sp.veff = v; updateSpecMoments(); }, x => x.toFixed(2), I18N.t('spec.title')));
+    ctrls.push(rangeCtrl(I18N.t('spec.rg'), 2, 30, 0.5, 'µm', () => sp.rg, v => { sp.rg = v; updateSpecMoments(); }, x => x.toFixed(1), I18N.t('spec.title')));
+    ctrls.push(rangeCtrl(I18N.t('spec.sigmaG'), 1.05, 2.5, 0.01, '', () => sp.sigmaG, v => { sp.sigmaG = v; updateSpecMoments(); }, x => x.toFixed(2), I18N.t('spec.title')));
     const imp = document.createElement('div'); imp.className = 'ctrl';
     imp.innerHTML = '<button class="act" id="imp-measured">' + I18N.t('spec.import') + '</button><div id="spec-moments" class="range-hint"></div>';
     imp.querySelector('#imp-measured').onclick = () => {
       const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.txt,.csv,text/plain';
       inp.onchange = () => { const f = inp.files[0]; if (!f) return; const r = new FileReader();
-        r.onload = () => { const res = global.Spectrum.importMeasured(r.result); const m = global.Spectrum.moments();
-          const el = document.getElementById('spec-moments'); if (el) el.textContent = 'N=' + m.N.toFixed(0) + '  re=' + m.re.toFixed(1) + 'µm  LWC=' + m.LWCgm3.toFixed(2) + 'g/m³ ' + (res.ok ? '✓' : '✗');
+        r.onload = () => { const res = global.Spectrum.importMeasured(r.result);
+          updateSpecMoments(res.ok ? '✓' : '✗');
+          syncValues();
           notifyChange(); }; r.readAsText(f); };
       inp.click();
     };
     ctrls.push(imp);
+    setTimeout(() => updateSpecMoments(), 0);
     const PHASES = global.Phases ? global.Phases.ORDER : ['water', 'ice', 'snow', 'graupel', 'hail'];
-    PHASES.forEach(k => ctrls.push(rangeCtrl(I18N.t('phase.' + k), 0, 1, 0.02, '', () => ph[k], v => ph[k] = v, x => x.toFixed(2), I18N.t('phase.title'))));
-    ctrls.push(selCtrl(I18N.t('phase.preset'), [['pureWater', I18N.t('phase.pureWater')], ['mixedIce', I18N.t('phase.mixedIce')], ['cirrus', I18N.t('phase.cirrus')], ['snowy', I18N.t('phase.snowy')], ['convective', I18N.t('phase.convective')]], () => '', v => { if (global.Phases) global.Phases.set(v); notifyChange(); }, I18N.t('phase.preset')));
-    ctrls.push(btn('— ' + I18N.t('phase.normalize'), () => { if (global.Phases) global.Phases.normalize(); notifyChange(); }, I18N.t('phase.normalize')));
+    PHASES.forEach(k => ctrls.push(rangeCtrl(I18N.t('phase.' + k), 0, 1, 0.02, '', () => ph[k], v => {
+      ph[k] = v;
+      if (S.micro) S.micro.iceFrac = Math.max(0, Math.min(1, 1 - (ph.water || 0)));
+    }, x => x.toFixed(2), I18N.t('phase.title'))));
+    ctrls.push(selCtrl(I18N.t('phase.preset'), [['', '— ' + I18N.t('phase.preset') + ' —'], ['pureWater', I18N.t('phase.pureWater')], ['mixedIce', I18N.t('phase.mixedIce')], ['cirrus', I18N.t('phase.cirrus')], ['snowy', I18N.t('phase.snowy')], ['convective', I18N.t('phase.convective')]], () => '', v => {
+      if (!v) return;
+      if (global.Phases) global.Phases.set(v);
+      syncValues();
+      notifyChange();
+    }, I18N.t('phase.preset')));
+    ctrls.push(btn('— ' + I18N.t('phase.normalize'), () => { if (global.Phases) global.Phases.normalize(); syncValues(); notifyChange(); }, I18N.t('phase.normalize')));
     ctrls.push(toggleCtrl(I18N.t('aerosol.on'), () => ae.on, v => ae.on = v, I18N.t('aerosol.title')));
     ctrls.push(rangeCtrl(I18N.t('aerosol.beta0'), 0, 2, 0.05, '×10⁻³ m⁻¹', () => ae.beta0 * 1000, v => ae.beta0 = v / 1000, x => x.toFixed(2), I18N.t('aerosol.title')));
     ctrls.push(rangeCtrl(I18N.t('aerosol.scaleH'), 0.3, 5, 0.1, 'km', () => ae.scaleH, v => ae.scaleH = v, x => x.toFixed(1), I18N.t('aerosol.title')));
@@ -514,8 +540,26 @@
     root.innerHTML = '<h3>' + I18N.t('ts.title') + '</h3>';
     const ta = document.createElement('textarea'); ta.id = 'ts-text'; ta.rows = 5; ta.placeholder = 't,surfTemp,RH,wind,wdir,conv,ci.cov,ci.den,cs.cov,cs.den,sc.cov,sc.den,cu.cov,cu.den,cb.cov,cb.den';
     root.appendChild(ta);
+    const formatTSSteps = () => {
+      const steps = (global.TimeSeries && global.TimeSeries.TS && global.TimeSeries.TS.steps) || [];
+      if (!steps.length) return '';
+      const header = '# t,surfTemp,RH,wind,wdir,conv,ci.cov,ci.den,cs.cov,cs.den,sc.cov,sc.den,cu.cov,cu.den,cb.cov,cb.den';
+      const lines = steps.map(s => {
+        const L = s.layers || {};
+        const g = (k, f, d) => (L[k] && L[k][f] != null) ? L[k][f] : d;
+        return [s.t, s.surfaceTemp, s.surfaceRH, s.windSpeed, s.windDir, s.convection,
+          g('ci','coverage',0), g('ci','density',0.4), g('cs','coverage',0), g('cs','density',0.5),
+          g('sc','coverage',0), g('sc','density',0.7), g('cu','coverage',0), g('cu','density',0.8),
+          g('cb','coverage',0), g('cb','density',0.9)].join(', ');
+      });
+      return [header].concat(lines).join('\n');
+    };
+    if (global.TimeSeries && (!global.TimeSeries.TS.steps || !global.TimeSeries.TS.steps.length)) {
+      global.TimeSeries.applyDefault();
+    }
+    ta.value = formatTSSteps();
     const row = document.createElement('div'); row.className = 'btn-row wrap';
-    row.appendChild(btn(I18N.t('ts.default'), () => { global.TimeSeries.applyDefault(); ta.value = ''; updateTSCurve(); }));
+    row.appendChild(btn(I18N.t('ts.default'), () => { global.TimeSeries.applyDefault(); ta.value = formatTSSteps(); updateTSCurve(); }));
     row.appendChild(btn(I18N.t('ts.import'), () => { const r = global.TimeSeries.importTimeSeries(ta.value); if (!r.ok) alert(r.msg); else updateTSCurve(); }));
     const playBtn = btn(I18N.t('ts.play'));
     row.appendChild(playBtn); row.appendChild(btn(I18N.t('ts.loop'), () => { global.TimeSeries.TS.loop = !global.TimeSeries.TS.loop; }));
@@ -523,12 +567,16 @@
     const cv = document.createElement('canvas'); cv.id = 'ts-curve'; cv.width = 420; cv.height = 170; cv.className = 'adv-canvas'; root.appendChild(cv);
     const slider = document.createElement('input'); slider.type = 'range'; slider.min = '0'; slider.max = '1000'; slider.value = '0'; root.appendChild(slider);
     const lab = document.createElement('div'); lab.className = 'range-hint'; root.appendChild(lab);
-    slider.addEventListener('input', () => {
-      const ts = global.TimeSeries.TS; if (!ts.steps.length) return;
-      const t = ts.t0 + (ts.t1 - ts.t0) * slider.value / 1000; global.TimeSeries.sampleAt(t);
-      if (global.__cf) global.__cf.onChange();
+    const updateLab = (t) => {
       const w = global.Physics.worstVisibilityDetailed(0);
       lab.textContent = I18N.t('ts.t0') + ' ' + t.toFixed(1) + 'h  vis=' + (isFinite(w.vis) ? (w.vis >= 1000 ? (w.vis / 1000).toFixed(2) + 'km' : w.vis.toFixed(0) + 'm') : '∞');
+    };
+    slider.addEventListener('input', () => {
+      const ts = global.TimeSeries.TS; if (!ts.steps.length) global.TimeSeries.applyDefault();
+      const t = ts.t0 + (ts.t1 - ts.t0) * slider.value / 1000; global.TimeSeries.sampleAt(t);
+      syncValues();
+      if (global.__cf) global.__cf.onChange();
+      updateLab(t);
     });
     playBtn.onclick = () => {
       if (tsTimer) { clearInterval(tsTimer); tsTimer = null; playBtn.textContent = I18N.t('ts.play'); return; }
@@ -536,11 +584,20 @@
       playBtn.textContent = '⏸'; let t = global.TimeSeries.TS.t0;
       tsTimer = setInterval(() => {
         global.TimeSeries.sampleAt(t); slider.value = String(Math.round((t - ts.t0) / (ts.t1 - ts.t0) * 1000));
+        syncValues();
         if (global.__cf) global.__cf.onChange();
+        updateLab(t);
         t += 0.5; if (t > ts.t1) { if (global.TimeSeries.TS.loop) t = ts.t0; else { clearInterval(tsTimer); tsTimer = null; playBtn.textContent = I18N.t('ts.play'); } }
       }, 120);
     };
-    function updateTSCurve() { const cv = document.getElementById('ts-curve'); if (!cv) return; const curve = global.TimeSeries.visibilityCurve(64).map(p => p.vis); if (global.Monitor) global.Monitor.drawCurve(cv, curve, 'vis'); }
+    function updateTSCurve() {
+      const cv = document.getElementById('ts-curve'); if (!cv) return;
+      if (global.TimeSeries && (!global.TimeSeries.TS.steps || !global.TimeSeries.TS.steps.length)) global.TimeSeries.applyDefault();
+      const curve = global.TimeSeries.visibilityCurve(64).map(p => p.vis);
+      if (global.Monitor) global.Monitor.drawCurve(cv, curve, 'vis');
+      updateLab(global.TimeSeries.TS.tNow || 0);
+    }
+    root._refresh = updateTSCurve;
     setTimeout(updateTSCurve, 0);
   }
 
@@ -699,47 +756,61 @@
 
   function buildQCPane(root) {
     root.innerHTML = '<h3>' + I18N.t('qc.title') + '</h3><div class="range-hint">' + I18N.t('qc.hint') + '</div>';
-    const ta = document.createElement('textarea'); ta.id = 'qc-text'; ta.rows = 6; ta.placeholder = 'METAR 行 或 探空: z,p,T,Td（每行一条）'; root.appendChild(ta);
+    const ta = document.createElement('textarea'); ta.id = 'qc-text'; ta.rows = 6; ta.placeholder = 'METAR 行 或 探空: z,p,T,Td（每行一条）';
+    ta.value = (global.Exporter && global.Exporter.toMETAR ? global.Exporter.toMETAR() : 'METAR ZBAA 120800Z 02004MPS 9999 FEW020 SCT100 15/11 Q1013') + '\nMETAR ZSPD 120900Z 11018MPS 0350 FG OVC002 12/12 Q1010\nMETAR ZGGG 121000Z 24008MPS 4000 BR BKN012 18/21 Q1008';
+    root.appendChild(ta);
     const row = document.createElement('div'); row.className = 'btn-row wrap';
     row.appendChild(btn(I18N.t('qc.run'), () => runQC())); root.appendChild(row);
     const out = document.createElement('div'); out.id = 'qc-out'; out.className = 'qc-out'; root.appendChild(out);
     function runQC() {
-      const txt = ta.value.trim(); const el = document.getElementById('qc-out');
+      const txt = ta.value.trim(); const el = document.getElementById('qc-out'); if (!el) return;
       if (/^\s*\d/.test(txt) && txt.indexOf(',') >= 0) {
         const rows = txt.split(/\r?\n/).map(l => { const v = l.split(/[\s,]+/).map(Number); return { z: v[0], p: v[1], T: v[2], Td: v[3] }; }).filter(r => isFinite(r.p));
         const rep = global.QC.flagSounding(rows);
         let html = '<div>' + I18N.t('qc.ok') + ':' + rep.counts.ok + ' ' + I18N.t('qc.warn') + ':' + rep.counts.warn + ' ' + I18N.t('qc.error') + ':' + rep.counts.error + ' ' + I18N.t('qc.missing') + ':' + rep.counts.missing + '</div>';
-        html += rep.rows.map(r => '<div class="' + (r.level === 'error' ? 'qc-err' : r.level === 'warn' ? 'qc-warn' : 'qc-ok') + '">z=' + r.z + ' p=' + r.p + ' T=' + r.T + ' Td=' + r.Td + ' → ' + r.flags.map(f => f.msg).join('; ') + '</div>').join('');
+        html += rep.rows.map(r => '<div class="' + (r.level === 'error' ? 'qc-err' : r.level === 'warn' ? 'qc-warn' : 'qc-ok') + '">z=' + r.z + ' p=' + r.p + ' T=' + r.T + ' Td=' + r.Td + ' → ' + (r.flags.length ? r.flags.map(f => f.msg).join('; ') : '✓ ' + I18N.t('qc.ok')) + '</div>').join('');
         el.innerHTML = html;
       } else {
         const rep = global.QC.flagMetar(txt);
         let html = '<div>' + I18N.t('qc.ok') + ':' + rep.counts.ok + ' ' + I18N.t('qc.warn') + ':' + rep.counts.warn + ' ' + I18N.t('qc.error') + ':' + rep.counts.error + '</div>';
-        html += rep.rows.map(r => '<div class="' + (r.level === 'error' ? 'qc-err' : r.level === 'warn' ? 'qc-warn' : 'qc-ok') + '">' + (r.raw || '') + ' → ' + r.flags.map(f => f.msg).join('; ') + '</div>').join('');
+        html += rep.rows.map(r => '<div class="' + (r.level === 'error' ? 'qc-err' : r.level === 'warn' ? 'qc-warn' : 'qc-ok') + '">' + (r.raw || '') + ' → ' + (r.flags.length ? r.flags.map(f => f.msg).join('; ') : '✓ ' + I18N.t('qc.ok')) + '</div>').join('');
         el.innerHTML = html;
       }
     }
+    root._refresh = runQC;
+    setTimeout(runQC, 0);
   }
 
   function buildExportPane(root) {
     root.innerHTML = '<h3>' + I18N.t('ex.title') + '</h3>';
     const ta = document.createElement('textarea'); ta.id = 'ex-out'; ta.rows = 10; ta.readOnly = true; root.appendChild(ta);
     let curFile = 'CloudField.metar.txt';
+    let curGen = () => (global.Exporter && global.Exporter.toMETAR) ? global.Exporter.toMETAR() : '';
+    const setOut = (file, gen) => { curFile = file; curGen = gen; ta.value = gen(); };
+    setOut('CloudField.metar.txt', () => global.Exporter.toMETAR());
     const row = document.createElement('div'); row.className = 'btn-row wrap';
-    row.appendChild(btn(I18N.t('ex.metar'), () => { curFile = 'CloudField.metar.txt'; ta.value = global.Exporter.toMETAR(); }));
-    row.appendChild(btn(I18N.t('ex.iwxxm'), () => { curFile = 'CloudField.iwxxm.xml'; ta.value = global.Exporter.toIWXXM(); }));
-    row.appendChild(btn(I18N.t('ex.bufr'), () => { curFile = 'CloudField.bufr.json'; ta.value = JSON.stringify(global.Exporter.toBUFR(), null, 2); }));
-    row.appendChild(btn(I18N.t('ex.grib'), () => { curFile = 'CloudField.grib.json'; ta.value = JSON.stringify(global.Exporter.toGRIB(), null, 2); }));
-    row.appendChild(btn(I18N.t('ex.icon'), () => { curFile = 'icon_microphysics.nml'; ta.value = global.Exporter.toICONNamelist(); }));
-    row.appendChild(btn(I18N.t('ex.yaml'), () => { curFile = 'cloudlab_experiment.yaml'; ta.value = global.Exporter.toExperimentYAML(); }));
-    row.appendChild(btn(I18N.t('ex.profCsv'), () => { curFile = 'CloudField_profile.csv'; ta.value = global.Exporter.toProfileCSV(0); }));
-    row.appendChild(btn(I18N.t('ex.schCsv'), () => { curFile = 'CloudField_schemes.csv'; ta.value = global.Exporter.toSchemeCSV(); }));
-    row.appendChild(btn(I18N.t('ex.matlab'), () => { curFile = 'CloudField_data.m'; ta.value = global.Exporter.toMATLABScript(0); }));
-    row.appendChild(btn(I18N.t('ex.of'), () => { curFile = 'ABLConditions.foam'; ta.value = global.Exporter.toOpenFOAM(0); }));
-    row.appendChild(btn(I18N.t('ex.fluent'), () => { curFile = 'CloudField_inlet.prof'; ta.value = global.Exporter.toFluentProfile(0); }));
-    row.appendChild(btn('ParaView / Tecplot 3D (.vtk)', () => { curFile = 'CloudField_volume.vtk'; ta.value = global.Exporter.toVTK3D(); }));
-    row.appendChild(btn(I18N.t('ex.copy'), () => { if (navigator.clipboard) navigator.clipboard.writeText(ta.value); }));
+    row.appendChild(btn(I18N.t('ex.metar'), () => setOut('CloudField.metar.txt', () => global.Exporter.toMETAR())));
+    row.appendChild(btn(I18N.t('ex.iwxxm'), () => setOut('CloudField.iwxxm.xml', () => global.Exporter.toIWXXM())));
+    row.appendChild(btn(I18N.t('ex.bufr'), () => setOut('CloudField.bufr.json', () => JSON.stringify(global.Exporter.toBUFR(), null, 2))));
+    row.appendChild(btn(I18N.t('ex.grib'), () => setOut('CloudField.grib.json', () => JSON.stringify(global.Exporter.toGRIB(), null, 2))));
+    row.appendChild(btn(I18N.t('ex.icon'), () => setOut('icon_microphysics.nml', () => global.Exporter.toICONNamelist())));
+    row.appendChild(btn(I18N.t('ex.yaml'), () => setOut('cloudlab_experiment.yaml', () => global.Exporter.toExperimentYAML())));
+    row.appendChild(btn(I18N.t('ex.profCsv'), () => setOut('CloudField_profile.csv', () => global.Exporter.toProfileCSV(0))));
+    row.appendChild(btn(I18N.t('ex.schCsv'), () => setOut('CloudField_schemes.csv', () => global.Exporter.toSchemeCSV())));
+    row.appendChild(btn(I18N.t('ex.matlab'), () => setOut('CloudField_data.m', () => global.Exporter.toMATLABScript(0))));
+    row.appendChild(btn(I18N.t('ex.of'), () => setOut('ABLConditions.foam', () => global.Exporter.toOpenFOAM(0))));
+    row.appendChild(btn(I18N.t('ex.fluent'), () => setOut('CloudField_inlet.prof', () => global.Exporter.toFluentProfile(0))));
+    row.appendChild(btn('ParaView / Tecplot 3D (.vtk)', () => setOut('CloudField_volume.vtk', () => global.Exporter.toVTK3D())));
+    const copyBtn = btn(I18N.t('ex.copy'));
+    copyBtn.onclick = () => {
+      if (!ta.value) ta.value = curGen();
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value);
+      const old = copyBtn.textContent; copyBtn.textContent = '✓ ' + old;
+      setTimeout(() => { copyBtn.textContent = old; }, 1000);
+    };
+    row.appendChild(copyBtn);
     row.appendChild(btn('⬇ ' + I18N.t('tb.export'), () => {
-      if (!ta.value) { curFile = 'icon_microphysics.nml'; ta.value = global.Exporter.toICONNamelist(); }
+      if (!ta.value) { setOut('icon_microphysics.nml', () => global.Exporter.toICONNamelist()); }
       const blob = new Blob([ta.value], { type: 'text/plain;charset=utf-8' });
       const u = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href = u; a.download = curFile; a.click(); URL.revokeObjectURL(u);
@@ -750,23 +821,29 @@
       const v = ep.value.trim(); if (!v) { alert(I18N.t('ex.endpoint')); return; }
       global.Exporter.pushTo(v, { format: 'json', data: global.Exporter.readouts() }, { verbose: true }).then(() => alert('OK')).catch(e => alert('ERR ' + e.message));
     }));
+    root._refresh = () => { ta.value = curGen(); };
   }
 
   function buildValidationPane(root) {
     root.innerHTML = '<h3>' + I18N.t('val2.title') + '</h3>';
     const ta = document.createElement('textarea'); ta.id = 'val-sonde-text'; ta.rows = 4;
     ta.placeholder = 'z(km), p(hPa), T(°C), Td(°C)\n0.0, 1013, 14.0, 12.5\n1.0, 898, 7.5, 6.8\n2.0, 795, 1.0, -0.2\n4.0, 616, -11.0, -15.0';
+    const formatSondeText = () => {
+      const src = (A.getRadiosonde ? A.getRadiosonde() : A.RADIOSONDE_SAMPLE) || {};
+      return (src.data || []).map(r => r.join(', ')).join('\n');
+    };
+    ta.value = formatSondeText();
     root.appendChild(ta);
     const row = document.createElement('div'); row.className = 'btn-row wrap';
     row.appendChild(btn(I18N.t('val2.run'), () => runVal()));
     row.appendChild(btn(I18N.t('tb.import'), () => {
-      if (!ta.value.trim()) return;
+      if (!ta.value.trim()) ta.value = formatSondeText();
       const res = A.importRadiosonde(ta.value, { assimilate: true });
       if (!res.ok) { alert(res.msg); return; }
       refreshAll(); notifyChange(); runVal();
     }));
     row.appendChild(btn('↺ ' + I18N.t('ts.default'), () => {
-      A.resetRadiosonde(); ta.value = ''; refreshAll(); notifyChange(); runVal();
+      A.resetRadiosonde(); ta.value = formatSondeText(); refreshAll(); notifyChange(); runVal();
     }));
     root.appendChild(row);
     const stats = document.createElement('div'); stats.id = 'val-stats'; stats.className = 'stat-cards'; root.appendChild(stats);
@@ -776,10 +853,11 @@
       const d = global.Validation.fromRadiosonde();
       const st = global.Validation.stats(d.visPairs);
       const el = document.getElementById('val-stats');
-      if (st) el.innerHTML = card(I18N.t('val2.bias'), st.bias.toFixed(0)) + card(I18N.t('val2.rmse'), st.rmse.toFixed(0)) + card(I18N.t('val2.mae'), st.mae.toFixed(0)) + card(I18N.t('val2.corr'), st.corr.toFixed(2));
+      if (st && el) el.innerHTML = card(I18N.t('val2.bias'), st.bias.toFixed(0)) + card(I18N.t('val2.rmse'), st.rmse.toFixed(0)) + card(I18N.t('val2.mae'), st.mae.toFixed(0)) + card(I18N.t('val2.corr'), st.corr.toFixed(2));
       if (global.Monitor) { global.Monitor.drawScatter(cv1, d.visPairs); const t = global.Validation.taylor(d.visPairs); if (t) global.Monitor.drawTaylor(cv2, t); }
     }
     root._refresh = runVal;
+    setTimeout(runVal, 0);
   }
 
   function buildRecorderPane(root) {
@@ -787,7 +865,14 @@
     const row = document.createElement('div'); row.className = 'btn-row wrap';
     const st = btn(I18N.t('rec.start')); st.onclick = () => { global.Recorder.start(); refreshRec(); };
     const sp = btn(I18N.t('rec.stop')); sp.onclick = () => { global.Recorder.stop(); refreshRec(); };
-    const pl = btn(I18N.t('rec.play')); pl.onclick = () => { global.Recorder.playback(400, () => { if (global.__cf) global.__cf.onChange(); refreshAll(); }, () => refreshRec()); };
+    const pl = btn(I18N.t('rec.play')); pl.onclick = () => {
+      global.Recorder.playback(400, () => {
+        syncValues();
+        if (global.__cfAxis && global.__cfAxis.refresh) global.__cfAxis.refresh();
+        if (global.__cf) global.__cf.onChange();
+        refreshRec();
+      }, () => { refreshAll(); refreshRec(); });
+    };
     const cl = btn(I18N.t('rec.clear')); cl.onclick = () => { global.Recorder.clear(); refreshRec(); };
     row.appendChild(st); row.appendChild(sp); row.appendChild(pl); row.appendChild(cl); root.appendChild(row);
     const impExp = document.createElement('div'); impExp.className = 'btn-row wrap';
@@ -795,7 +880,8 @@
     impExp.appendChild(btn(I18N.t('rec.import'), () => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json'; inp.onchange = () => { const f = inp.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { global.Recorder.importJSON(r.result); refreshRec(); }; r.readAsText(f); }; inp.click(); }));
     root.appendChild(impExp);
     const status = document.createElement('div'); status.id = 'rec-status'; status.className = 'range-hint'; root.appendChild(status);
-    function refreshRec() { const e = document.getElementById('rec-status'); if (e) e.textContent = I18N.t('rec.count', { n: global.Recorder.count() }); }
+    function refreshRec() { const e = document.getElementById('rec-status'); if (e) e.textContent = I18N.t('rec.count', { n: global.Recorder.count() }) + (global.Recorder.R && global.Recorder.R.recording ? ' ● REC' : ''); }
+    root._refresh = refreshRec;
     setTimeout(refreshRec, 0);
   }
 

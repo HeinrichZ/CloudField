@@ -69,10 +69,11 @@ function make2D() {
 }
 
 // ================= 伪 DOM =================
+const byId = new Map();
 class FakeEl {
   constructor(tag = 'div', id = '') {
     this.tagName = String(tag).toUpperCase();
-    this.id = id; this._attrs = {}; this.dataset = {};
+    this._id = ''; this.id = id; this._attrs = {}; this.dataset = {};
     this.style = {}; this.children = []; this.textContent = ''; this.innerHTML = '';
     this.checked = false; this.value = ''; this.type = ''; this.title = ''; this.href = ''; this.download = '';
     this.clientWidth = 960; this.clientHeight = 600; this.width = 300; this.height = 150;
@@ -85,11 +86,13 @@ class FakeEl {
       contains: c => cls.has(c),
     };
   }
+  get id() { return this._id; }
+  set id(v) { this._id = String(v || ''); if (this._id) byId.set(this._id, this); }
   setAttribute(k, v) { this._attrs[k] = String(v); }
   getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; }
   removeAttribute(k) { delete this._attrs[k]; }
   hasAttribute(k) { return k in this._attrs; }
-  appendChild(c) { this.children.push(c); return c; }
+  appendChild(c) { if (c && c.id) byId.set(c.id, c); this.children.push(c); return c; }
   addEventListener(type, fn) { (this._ev[type] = this._ev[type] || []).push(fn); }
   removeEventListener() {}
   dispatch(type, ev = {}) { (this._ev[type] || []).forEach(f => f(ev)); }
@@ -128,7 +131,6 @@ const closeBtns = ['docs-modal', 'validate-modal', 'integration-modal', 'adv-mod
 });
 const modals = ['docs-modal', 'validate-modal', 'integration-modal', 'adv-modal'].map(id => new FakeEl('div', id));
 
-const byId = new Map();
 function reg(id, el) { byId.set(id, el); return el; }
 reg('gl', Object.assign(new FakeEl('canvas', 'gl'), { clientWidth: 960, clientHeight: 600 }));
 reg('loading', staticEl('div', 'loading', 'loading.init'));
@@ -1226,6 +1228,17 @@ ok(Math.abs(Amod.tempAt(1.4) - stdTemp14) < 0.05, 'deserialize 标准快照自�
 win.Integration.Bridge.applyDelta({ 'wind.speed': 14, 'visibility.value': 500, 'micro.effRadiusUm': 11.5 });
 ok(Amod.STATE.micro.effRadiusUm === 11.5 && Amod.STATE.surfaceRH >= 95, 'Bridge.applyDelta 支持 micro.* 与 visibility.value 等双层点路径增量更新');
 ok(typeof win.Report.isAnnotating === 'function' && win.Report.isAnnotating() === false && typeof win.GUI.syncValues === 'function', 'Report.isAnnotating 与 GUI.syncValues 正常导出');
+win.Phases.set('cirrus');
+ok(Amod.STATE.micro.iceFrac === 1, 'Phases.set(cirrus) 同步更新 STATE.micro.iceFrac=1');
+win.Phases.set('pureWater');
+ok(Amod.STATE.micro.iceFrac === 0, 'Phases.set(pureWater) 同步更新 STATE.micro.iceFrac=0');
+win.Recorder.clear(); win.Recorder.start(); win.Recorder.stop();
+ok(win.Recorder.R.events.length === 2 && win.Recorder.R.events[1].label === 'record-end', 'Recorder.stop 完整记录 record-end 结束事件');
+win.Monitor.addSnapshot({ label: 'T1', vis: 550 });
+ok(byId.get('dash-snapshots') && byId.get('dash-snapshots').innerHTML.indexOf('T1') >= 0, 'Monitor.addSnapshot 立即渲染快照筹码与基线');
+win.Monitor.clearSnapshots();
+ok(byId.get('ts-text') && byId.get('ts-text').value.length > 20 && byId.get('qc-text') && byId.get('qc-text').value.length > 20 && byId.get('ex-out') && byId.get('ex-out').value.length > 10 && byId.get('val-sonde-text') && byId.get('val-sonde-text').value.length > 10,
+  '高级诊断面板：时变预报/数据质控/业务输出/验证评估 打开即预填有效初始内容，无空白失灵');
 Amod.deserialize(snapBefore9);
 
 // ================= 汇总 =================
