@@ -1181,7 +1181,6 @@
         <button data-tab="airport">${I18N.t('tab.airport')}</button>
         <button data-tab="dispatch">${I18N.t('tab.dispatch')}</button>
         <button data-tab="bridge">${I18N.t('tab.bridge')}</button>
-        <button data-tab="replay">${I18N.t('tab.replay')}</button>
       </div>
       <div class="int-body">
         <div data-pane="metar" class="int-pane active"></div>
@@ -1189,7 +1188,6 @@
         <div data-pane="airport" class="int-pane"></div>
         <div data-pane="dispatch" class="int-pane"></div>
         <div data-pane="bridge" class="int-pane"></div>
-        <div data-pane="replay" class="int-pane"></div>
       </div>`;
     const panes = {
       metar: root.querySelector('[data-pane="metar"]'),
@@ -1197,7 +1195,6 @@
       airport: root.querySelector('[data-pane="airport"]'),
       dispatch: root.querySelector('[data-pane="dispatch"]'),
       bridge: root.querySelector('[data-pane="bridge"]'),
-      replay: root.querySelector('[data-pane="replay"]'),
     };
     root.querySelectorAll('.int-tabs button').forEach(b => {
       b.onclick = () => {
@@ -1212,7 +1209,6 @@
     buildAirportPane(panes.airport);
     buildDispatchPane(panes.dispatch);
     buildBridgePane(panes.bridge);
-    buildReplayPane(panes.replay);
   }
 
   function buildMetarPane(el) {

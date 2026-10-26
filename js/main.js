@@ -281,6 +281,18 @@
           <button class="act" id="modal-sonde-reset">↺ ${I18N.t('ts.default')}</button>
         </div>
       </div>
+      ${(() => {
+        if (!global.Validation) return '';
+        const d = global.Validation.fromRadiosonde(sonde);
+        const st = global.Validation.stats(d.visPairs);
+        if (!st) return '';
+        return '<div class="stat-cards" style="margin:6px 0">' +
+          '<div class="stat-card"><div class="sc-k">' + I18N.t('val2.bias') + '</div><div class="sc-v">' + st.bias.toFixed(0) + '</div></div>' +
+          '<div class="stat-card"><div class="sc-k">' + I18N.t('val2.rmse') + '</div><div class="sc-v">' + st.rmse.toFixed(0) + '</div></div>' +
+          '<div class="stat-card"><div class="sc-k">' + I18N.t('val2.mae') + '</div><div class="sc-v">' + st.mae.toFixed(0) + '</div></div>' +
+          '<div class="stat-card"><div class="sc-k">' + I18N.t('val2.corr') + '</div><div class="sc-v">' + st.corr.toFixed(2) + '</div></div>' +
+          '</div>';
+      })()}
       <table><thead><tr><th>${I18N.t('val.th.z')}</th><th>${I18N.t('val.th.p')}</th><th>${I18N.t('val.th.T')}</th><th>${I18N.t('val.th.Td')}</th><th>${I18N.t('val.th.vis')}</th><th>${I18N.t('val.th.lwc')}</th></tr></thead><tbody>`;
     rows.forEach(r => {
       const vis = r.modelVis == null ? clear : (r.modelVis >= 1000 ? (r.modelVis / 1000).toFixed(2) + 'km' : r.modelVis.toFixed(0) + 'm');

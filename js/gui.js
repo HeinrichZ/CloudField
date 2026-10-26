@@ -900,11 +900,6 @@
       const a = document.createElement('a'); a.href = u; a.download = curFile; a.click(); URL.revokeObjectURL(u);
     }));
     root.appendChild(row);
-    const ep = document.createElement('input'); ep.placeholder = I18N.t('ex.endpoint'); ep.style.width = '70%'; root.appendChild(ep);
-    root.appendChild(btn(I18N.t('ex.push'), () => {
-      const v = ep.value.trim(); if (!v) { alert(I18N.t('ex.endpoint')); return; }
-      global.Exporter.pushTo(v, { format: 'json', data: global.Exporter.readouts() }, { verbose: true }).then(() => alert('OK')).catch(e => alert('ERR ' + e.message));
-    }));
     root._refresh = () => { ta.value = curGen(); };
   }
 
@@ -933,12 +928,25 @@
     const stats = document.createElement('div'); stats.id = 'val-stats'; stats.className = 'stat-cards'; root.appendChild(stats);
     const cv1 = document.createElement('canvas'); cv1.id = 'val-scatter'; cv1.width = 200; cv1.height = 200; cv1.className = 'adv-canvas'; root.appendChild(cv1);
     const cv2 = document.createElement('canvas'); cv2.id = 'val-taylor'; cv2.width = 200; cv2.height = 200; cv2.className = 'adv-canvas'; root.appendChild(cv2);
+    const tblWrap = document.createElement('div'); tblWrap.id = 'val-table-wrap'; tblWrap.style.marginTop = '8px'; root.appendChild(tblWrap);
     function runVal() {
       const d = global.Validation.fromRadiosonde();
       const st = global.Validation.stats(d.visPairs);
       const el = document.getElementById('val-stats');
       if (st && el) el.innerHTML = card(I18N.t('val2.bias'), st.bias.toFixed(0)) + card(I18N.t('val2.rmse'), st.rmse.toFixed(0)) + card(I18N.t('val2.mae'), st.mae.toFixed(0)) + card(I18N.t('val2.corr'), st.corr.toFixed(2));
       if (global.Monitor) { global.Monitor.drawScatter(cv1, d.visPairs); const t = global.Validation.taylor(d.visPairs); if (t) global.Monitor.drawTaylor(cv2, t); }
+      const rows = A.validateAgainstRadiosonde ? A.validateAgainstRadiosonde() : null;
+      if (Array.isArray(rows) && tblWrap) {
+        const clear = I18N.t('val.clear');
+        let th = '<table><thead><tr><th>' + I18N.t('val.th.z') + '</th><th>' + I18N.t('val.th.p') + '</th><th>' + I18N.t('val.th.T') + '</th><th>' + I18N.t('val.th.Td') + '</th><th>' + I18N.t('val.th.vis') + '</th><th>' + I18N.t('val.th.lwc') + '</th></tr></thead><tbody>';
+        rows.forEach(r => {
+          const vis = r.modelVis == null ? clear : (r.modelVis >= 1000 ? (r.modelVis / 1000).toFixed(2) + 'km' : r.modelVis.toFixed(0) + 'm');
+          const oVis = r.obsVis == null ? '—' : (r.obsVis >= 1000 ? (r.obsVis / 1000).toFixed(2) + 'km' : r.obsVis.toFixed(0) + 'm');
+          th += '<tr><td>' + r.z.toFixed(1) + '</td><td>' + r.p.toFixed(0) + '</td><td>' + r.T.toFixed(1) + '</td><td>' + r.Td.toFixed(1) + '</td><td>' + vis + ' <small style="opacity:.7">(' + oVis + ')</small></td><td>' + r.lwc.toFixed(2) + '</td></tr>';
+        });
+        th += '</tbody></table>';
+        tblWrap.innerHTML = th;
+      }
     }
     root._refresh = runVal;
     setTimeout(runVal, 0);
@@ -988,15 +996,6 @@
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link);
     };
     row.appendChild(share);
-    const ann = btn(I18N.t('rep.annotate'));
-    ann.onclick = () => {
-      if (!global.Report) return;
-      const on = global.Report.isAnnotating ? global.Report.isAnnotating() : false;
-      if (on) { global.Report.disableAnnotation(); ann.classList.remove('active'); }
-      else { global.Report.enableAnnotation(); ann.classList.add('active'); }
-    };
-    row.appendChild(ann);
-    row.appendChild(btn(I18N.t('rep.exportAnno'), () => { const u = global.Report.exportAnnotated(); if (u) { const a = document.createElement('a'); a.href = u; a.download = 'CloudField_annotated.png'; a.click(); } }));
     root.appendChild(row);
   }
 
