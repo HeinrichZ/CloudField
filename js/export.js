@@ -17,7 +17,7 @@
   function readouts() {
     const w = P.worstVisibilityDetailed(0);
     const cover = A.totalCloudCover();
-    const ops = O.compute(0);
+    const ops = O.compute(0, { all: true });
     const info = w.info || {};
     return { vis: w.vis, alt: w.alt, cover, ops, re: info.re != null ? info.re : A.operativeRe(0), lwc: info.lwc || 0 };
   }
@@ -201,6 +201,16 @@
       '  in_plume_visibility_m: ' + (sdDiag ? Math.round(sdDiag.visSeededM) : 'NA'),
       '  visibility_gain_ratio: ' + (sdDiag ? sdDiag.gainRatio.toFixed(2) : '1.00'),
       '  cat1_minima_recovered: ' + (sdDiag ? sdDiag.cat1Recovered : false),
+      'thermodynamics_and_aviation_hazards:',
+      '  cape_j_kg: ' + (r.ops && r.ops.thermo ? r.ops.thermo.capeJkg : 0),
+      '  cin_j_kg: ' + (r.ops && r.ops.thermo ? r.ops.thermo.cinJkg : 0),
+      '  lifted_index_c: ' + (r.ops && r.ops.thermo ? r.ops.thermo.liftedIndex : 0),
+      '  icing_max_index: ' + (r.ops && r.ops.icing ? r.ops.icing.maxIndex : 0),
+      '  svr_cat1_dh_m: ' + (r.ops && r.ops.approachSlant ? r.ops.approachSlant.svrAtCat1DhM : 0),
+      '  edr_max_m23s1: ' + (r.ops && r.ops.turbulence ? r.ops.turbulence.edrMax : 0),
+      '  llws_kt_per_100ft: ' + (r.ops && r.ops.turbulence ? r.ops.turbulence.llwsKtPer100Ft : 0),
+      '  uav_low_alt_status: ' + (r.ops && r.ops.uav ? r.ops.uav.status : 'GO'),
+      '  cruise_contrail_persistent: ' + (r.ops && r.ops.contrail ? r.ops.contrail.contrailPersistent : false),
     ].join('\n');
   }
 

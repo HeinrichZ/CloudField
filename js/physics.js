@@ -109,8 +109,11 @@
     const layers = A.effectiveLayers();
     const wind = { x: S.windSpeed, dir: S.windDir };
     let maxIdx = 0, worstAlt = 0, maxSlwc = 0, worstSev = 'NONE', anySld = false;
+    const tSfc = A.tempAt(0);
+    let warmNose = false;
     for (let z = 0.25; z <= 9.0; z += 0.25) {
       const d = detailedAt(0, 0, z, layers, wind, time || 0);
+      if (tSfc < 0 && z <= 3.5 && d.temp > 0.2) warmNose = true;
       const fw = d.frac ? (d.frac.water || 0) : 1;
       const ic = icingIndexAt(z, d.lwc, d.temp, d.reUm, fw);
       if (ic.index > maxIdx) {
@@ -118,7 +121,8 @@
       }
       if (ic.sldRisk) anySld = true;
     }
-    return { maxIndex: maxIdx, worstAltKm: worstAlt, maxSlwcGm3: maxSlwc, severity: worstSev, sldRisk: anySld };
+    if (warmNose && S.precipRateMmH > 0) anySld = true;
+    return { maxIndex: maxIdx, worstAltKm: worstAlt, maxSlwcGm3: maxSlwc, severity: worstSev, sldRisk: anySld, warmNose };
   }
 
   // 当前粒子谱有效方差 ν_eff（来自 Spectrum 模块或 STATE.spectrum）
@@ -423,6 +427,135 @@
     };
   }
 
+  // 低空经济 / 无人机（UAV / eVTOL / 播云无人机 / 通航直升机）与光电吊舱（EO/IR）0–1000 m AGL 适航评估
+  function uavLowAltitudeAssessment(opts) {
+    opts = opts || {};
+    const t = opts.time || 0;
+    const opAltKm = Math.max(0.05, Math.min(1.5, opts.altKm != null ? +opts.altKm : 0.30));
+    const layers = A.effectiveLayers();
+    const wind = { x: S.windSpeed, dir: S.windDir };
+    let minVisM = Infinity;
+    let minTempC = Infinity;
+    let maxLwcLiq = 0;
+    let maxRotorIcingIdx = 0;
+    const sampleAlts = [0.05, 0.15, 0.30, 0.50, 0.75, 1.00];
+    for (let i = 0; i < sampleAlts.length; i++) {
+      const z = sampleAlts[i];
+      const d = detailedAt(0, 0, z, layers, wind, t);
+      const vis = A.visibilityFromExt(d.betaExt);
+      if (vis < minVisM) minVisM = vis;
+      if (d.temp < minTempC) minTempC = d.temp;
+      const fw = d.frac ? (d.frac.water || 0) : 1;
+      const lwcLiq = d.lwc * fw;
+      if (lwcLiq > maxLwcLiq) maxLwcLiq = lwcLiq;
+      // 无人机无除冰碳纤维桨叶对过冷水滴积冰敏感度约为运输机机翼的 2.2 倍
+      const icObj = icingIndexAt(z, d.lwc, d.temp, d.reUm, fw);
+      const airframeIdx = icObj ? (icObj.index || 0) : 0;
+      const fzPrecipBoost = (d.temp < 0 && (S.precipRateMmH || 0) > 0.5) ? 35 : 0;
+      const rotorIdx = Math.min(100, Math.round(airframeIdx * 2.2 + ((d.temp <= 0 && d.temp >= -18 && lwcLiq >= 0.04) ? 18 : 0) + fzPrecipBoost));
+      if (rotorIdx > maxRotorIcingIdx) maxRotorIcingIdx = rotorIdx;
+    }
+    const dOp = detailedAt(0, 0, opAltKm, layers, wind, t);
+    // 1 km 斜距光电吊舱透过率：可见光 550 nm 与短波红外 SWIR 1550 nm（雾/霾散射衰减较可见光减弱）
+    const betaVis = Math.max(0, dOp.betaExt);
+    const betaSwir = Math.max(0, dOp.cloudBeta * 0.88 + dOp.aerBeta * Math.pow(550 / 1550, 1.3) + (dOp.precipBeta || 0) * 0.92);
+    const eoirVisTrans1kmPct = +(Math.exp(-betaVis * 1000) * 100).toFixed(1);
+    const eoirSwirTrans1kmPct = +(Math.exp(-betaSwir * 1000) * 100).toFixed(1);
+    // 锂电池低温可用容量折减率（< 15°C 开始衰减，0°C 约折减 18%，-10°C 约折减 40%）
+    let batteryDeratingPct = 0;
+    if (minTempC < 15) {
+      if (minTempC >= 0) batteryDeratingPct = (15 - minTempC) * 1.2;
+      else batteryDeratingPct = 18 + Math.abs(minTempC) * 2.2;
+    }
+    batteryDeratingPct = +Math.min(65, Math.max(0, batteryDeratingPct)).toFixed(1);
+    const turb = turbulenceAndShearDiagnostics(t);
+    const windMs = +(S.windSpeed || 0).toFixed(1);
+    const rotorIcingLevel = maxRotorIcingIdx >= 60 ? 'SEVERE' : (maxRotorIcingIdx >= 35 ? 'MODERATE' : (maxRotorIcingIdx >= 15 ? 'LIGHT' : 'NONE'));
+    const limitingFactors = [];
+    let status = 'GO';
+    const escalate = lvl => {
+      if (lvl === 'NO-GO') status = 'NO-GO';
+      else if (lvl === 'CAUTION' && status === 'GO') status = 'CAUTION';
+    };
+    if (maxRotorIcingIdx >= 45) { escalate('NO-GO'); limitingFactors.push('ROTOR_ICING'); }
+    else if (maxRotorIcingIdx >= 20) { escalate('CAUTION'); limitingFactors.push('ROTOR_ICING'); }
+    if (windMs >= 14) { escalate('NO-GO'); limitingFactors.push('WIND_LIMIT'); }
+    else if (windMs >= 10.5) { escalate('CAUTION'); limitingFactors.push('WIND_LIMIT'); }
+    if (turb.edrMax >= 0.32 || turb.microburstRisk) { escalate('NO-GO'); limitingFactors.push('TURBULENCE_EDR'); }
+    else if (turb.edrMax >= 0.20) { escalate('CAUTION'); limitingFactors.push('TURBULENCE_EDR'); }
+    if (minVisM < 500) { escalate('NO-GO'); limitingFactors.push('LOW_VIS_VLOS'); }
+    else if (minVisM < 1500) { escalate('CAUTION'); limitingFactors.push('LOW_VIS_VLOS'); }
+    if (batteryDeratingPct >= 35) { escalate('CAUTION'); limitingFactors.push('BATTERY_COLD'); }
+    return {
+      opAltKm,
+      status,
+      limitingFactors,
+      minVisLowAltM: isFinite(minVisM) ? Math.round(minVisM) : 99999,
+      minTempLowAltC: +minTempC.toFixed(1),
+      rotorIcingIndex: maxRotorIcingIdx,
+      rotorIcingLevel,
+      batteryDeratingPct,
+      windMs,
+      edrMax: turb.edrMax,
+      eoirVisTrans1kmPct,
+      eoirSwirTrans1kmPct,
+    };
+  }
+
+  // 高空巡航（FL260–FL400，默认 10.5 km ≈ FL340）Schmidt–Appleman 飞机凝结尾迹（Contrail）判据与上对流层静力稳定度诊断
+  function cruiseContrailAssessment(cruiseAltKm, time) {
+    const z = Math.max(6.0, Math.min(13.5, cruiseAltKm != null ? +cruiseAltKm : 10.5));
+    const pHpa = A.pressureAt(z);
+    const pPa = pHpa * 100;
+    const tAmbC = A.tempAt(z);
+    const tdAmbC = A.dewAt(z);
+    // 航空煤油 Jet-A1 标准排放参数：EI_H2O = 1.25 kg/kg, Q = 43.2 MJ/kg, c_p = 1004 J/(kg·K), ε = 0.622, η = 0.35
+    const G = (1.25 * 1004 * pPa) / (0.622 * 43.2e6 * (1 - 0.35)); // Pa / K
+    const lnG = Math.log(Math.max(1e-3, G - 0.053));
+    // Schumann (1996) Schmidt–Appleman 临界温度阈值 T_LM (°C)
+    const tThresholdC = +(-46.46 + 9.43 * lnG + 0.720 * lnG * lnG).toFixed(2);
+    // 环境水汽压与对冰相对湿度 RHi (%)：若高空卷云层 ci 在该高度激活，叠加高空冰过饱和湿层贡献
+    const eswTd = A.esWater ? A.esWater(tdAmbC) : 6.112 * Math.exp((17.67 * tdAmbC) / (tdAmbC + 243.5));
+    const esiAmb = A.esIce ? A.esIce(tAmbC) : 6.112 * Math.exp((21.8745584 * tAmbC) / (tAmbC + 265.5));
+    const eswAmb = A.esWater ? A.esWater(tAmbC) : 6.112 * Math.exp((17.67 * tAmbC) / (tAmbC + 243.5));
+    let rhiPct = (eswTd / Math.max(1e-6, esiAmb)) * 100;
+    const ci = S.layers && S.layers.ci;
+    if (ci && ci.on && ci.coverage > 0.05 && z >= ci.base - 0.5 && z <= ci.top + 0.5) {
+      const ciHumBoost = 75 + 45 * ci.coverage * ci.density;
+      if (ciHumBoost > rhiPct) rhiPct = ciHumBoost;
+    }
+    rhiPct = +Math.min(145, Math.max(5, rhiPct)).toFixed(1);
+    const rhwPct = +((rhiPct * esiAmb) / Math.max(1e-6, eswAmb)).toFixed(1);
+    // 形成凝结尾迹的临界相对湿度（对水）U_crit (%)
+    let uCritWaterPct = 100;
+    if (tAmbC <= tThresholdC) {
+      const eswTlm = A.esWater ? A.esWater(tThresholdC) : 6.112 * Math.exp((17.67 * tThresholdC) / (tThresholdC + 243.5));
+      const eCritPa = eswTlm * 100 - G * (tThresholdC - tAmbC);
+      uCritWaterPct = Math.max(0, Math.min(100, (eCritPa / (eswAmb * 100)) * 100));
+    }
+    const contrailForms = (tAmbC <= tThresholdC) && (rhwPct >= uCritWaterPct || rhiPct >= 95);
+    const contrailPersistent = contrailForms && (rhiPct >= 100.0);
+    // 位温 θ (K) 与 Brunt–Väisälä 静力稳定度频率 N_BV (s⁻¹)
+    const thetaAt = zz => (A.tempAt(zz) + 273.15) * Math.pow(1000 / Math.max(10, A.pressureAt(zz)), 0.2854);
+    const thetaK = +thetaAt(z).toFixed(1);
+    const dThetaDzKm = (thetaAt(Math.min(14, z + 0.25)) - thetaAt(Math.max(0, z - 0.25))) / 0.5;
+    const nBvS1 = +Math.sqrt(Math.max(1e-6, (9.80665 / thetaK) * (dThetaDzKm / 1000))).toFixed(4);
+    return {
+      cruiseAltKm: z,
+      flightLevel: Math.round((z * 3280.84) / 100),
+      tempAmbC: +tAmbC.toFixed(1),
+      tThresholdC,
+      mixingSlopeGPaK: +G.toFixed(3),
+      rhiPct,
+      rhwPct,
+      contrailForms,
+      contrailPersistent,
+      thetaK,
+      nBvS1,
+      avoidanceDeltaFt: contrailPersistent ? -2000 : 0,
+    };
+  }
+
   // —— 水平能见度场 + 统计量 ——
   function fieldStats(opts) {
     opts = opts || {};
@@ -655,6 +788,7 @@
     currentVeff, detailedAt, visibilityDetailed,
     worstVisibilityDetailed, seedingDiagnostics, optimalSeedingPoint,
     approachSlantProfile, turbulenceAndShearDiagnostics,
+    uavLowAltitudeAssessment, cruiseContrailAssessment,
     fieldStats, sensitivityGrid, sensitivityOpen,
     setPath, getPath, applyStatePatch,
   };

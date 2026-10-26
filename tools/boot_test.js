@@ -1100,6 +1100,30 @@ ok(daHotPlateau.densityAltFt > daHotPlateau.elevFt + 2000 && daHotPlateau.highDa
   'Coord.densityAltitude 计入高湿虚温修正，准确计算高原高温机场密度高度 (DA) 与起飞滑跑距离增量百分比',
   `Elev=${daHotPlateau.elevFt}ft → DA=${daHotPlateau.densityAltFt}ft, σ=${daHotPlateau.densityRatioSigma}, roll+${daHotPlateau.takeoffRollIncreasePct}%`);
 
+// 15) 低空经济 UAV/eVTOL 适航评估、高空巡航凝结尾迹 (Contrail)、预设场景扩充与批处理/报告全字段校验
+win.Help.applyScenario('fzra');
+const uavFzra = win.Physics.uavLowAltitudeAssessment({ altKm: 0.4 });
+const icFzra = win.Physics.icingDiagnostics(0);
+ok(uavFzra.status === 'NO-GO' && uavFzra.rotorIcingIndex >= 45 && uavFzra.batteryDeratingPct >= 20 && icFzra.warmNose === true && icFzra.sldRisk === true,
+  'fzra（冻雨暖鼻积冰）场景联动自定义探空暖鼻、SLD 过冷大水滴告警与低空 UAV 旋翼积冰/低温电池折减 NO-GO 判据',
+  `UAV=${uavFzra.status} (${uavFzra.limitingFactors.join(',')}), rotorIcing=${uavFzra.rotorIcingIndex}, battDerate=${uavFzra.batteryDeratingPct}%, SLD=${icFzra.sldRisk}`);
+
+win.Help.applyScenario('cirrus');
+Amod.STATE.surfaceTemp = 12; Amod.STATE.lapseRate = 6.5;
+Amod.STATE.layers.ci.on = true; Amod.STATE.layers.ci.coverage = 0.85; Amod.STATE.layers.ci.density = 0.80;
+const ctrCruise = win.Physics.cruiseContrailAssessment(10.5);
+ok(ctrCruise.tempAmbC < ctrCruise.tThresholdC && ctrCruise.contrailForms === true && ctrCruise.contrailPersistent === true && ctrCruise.thetaK > 310 && ctrCruise.nBvS1 > 0.005,
+  'Physics.cruiseContrailAssessment 按 ICAO/WMO Schmidt-Appleman 判据计算 FL340 巡航凝结尾迹临界温度 T_LM、冰过饱和持续性与静力稳定度 N_BV',
+  `FL${ctrCruise.flightLevel}: T=${ctrCruise.tempAmbC}°C <= T_LM=${ctrCruise.tThresholdC}°C, RHi=${ctrCruise.rhiPct}%, persistent=${ctrCruise.contrailPersistent}, N_BV=${ctrCruise.nBvS1} s⁻¹`);
+
+win.Help.applyScenario('plateau');
+const batchRow = win.Batch.runOne(null, 0);
+const yamlManifest = win.Exporter.toExperimentYAML();
+const htmlRep = win.Report.generateHTML();
+ok(batchRow.uavStatus != null && batchRow.capeJkg != null && typeof batchRow.contrailPersistent === 'boolean' && yamlManifest.includes('uav_low_alt_status:') && htmlRep.includes('低空 UAV/eVTOL 适航评估'),
+  'plateau（高原高温高密）场景及 Batch / Exporter.toExperimentYAML / Report.generateHTML 完整包含热力学、积冰、下滑道 SVR、UAV 与巡航尾迹全字段',
+  `Batch CAPE=${batchRow.capeJkg} J/kg, UAV=${batchRow.uavStatus}, Contrail=${batchRow.contrailPersistent}`);
+
 Amod.deserialize(snapBefore9);
 
 // ================= 汇总 =================

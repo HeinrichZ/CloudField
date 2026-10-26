@@ -65,14 +65,35 @@
       phases: { water: 0.35, ice: 0.25, snow: 0.10, graupel: 0.20, hail: 0.10 },
       aerosol: { on: false, beta0: 1e-4, scaleH: 1.5, omega: 0.92 },
     },
+    fzra: {
+      scalars: { surfaceTemp: -3.5, surfacePressure: 1016, surfaceRH: 95, windSpeed: 9, windDir: 70, lapseRate: 4.5, dewLapse: 1.0, convection: 12, sliceAlt: 0.6, precipRateMmH: 3.5 },
+      layers: { sc: { on: true, coverage: 0.95, density: 0.90, base: 0.2, top: 2.2 }, cs: { on: true, coverage: 0.75, density: 0.65, base: 2.2, top: 5.0 }, cu: { on: false, coverage: 0, density: 0, base: 0.8, top: 3.5 }, ci: { on: false, coverage: 0, density: 0, base: 8, top: 12 }, cb: { on: false, coverage: 0, density: 0, base: 0.6, top: 9 } },
+      micro: { scheme: 'kk2000', reMode: 'fixed', effRadiusUm: 22, dropConc: 85, autoPhaseTemp: false },
+      phases: { water: 0.92, ice: 0.08, snow: 0, graupel: 0, hail: 0 },
+      aerosol: { on: false, beta0: 1e-4, scaleH: 1.5, omega: 0.92 },
+      radiosonde: '0.0,1016,-3.5,-4.0\n0.6,942,-5.2,-5.5\n1.4,855,2.4,2.1\n2.2,775,-2.5,-2.8\n4.0,616,-11.0,-12.0\n8.0,356,-36.0,-42.0\n12.0,193,-56.0,-64.0',
+    },
+    plateau: {
+      scalars: { surfaceTemp: 28, surfacePressure: 752, surfaceRH: 64, windSpeed: 11, windDir: 250, lapseRate: 7.8, dewLapse: 1.9, convection: 75, sliceAlt: 2.2, precipRateMmH: 0 },
+      layers: { cu: { on: true, coverage: 0.68, density: 0.78, base: 1.2, top: 4.8 }, cb: { on: true, coverage: 0.45, density: 0.70, base: 1.4, top: 10.5 }, sc: { on: false, coverage: 0, density: 0, base: 0.4, top: 1.5 }, cs: { on: false, coverage: 0, density: 0, base: 4.5, top: 8.0 }, ci: { on: true, coverage: 0.40, density: 0.45, base: 9.0, top: 12.5 } },
+      micro: { scheme: 'sb06', reMode: 'derived', effRadiusUm: 12, dropConc: 160, autoPhaseTemp: true },
+      phases: { water: 0.55, ice: 0.25, snow: 0.05, graupel: 0.15, hail: 0 },
+      aerosol: { on: false, beta0: 1e-4, scaleH: 1.5, omega: 0.92 },
+    },
   };
 
   function applyScenario(name) {
     const sc = SCENARIOS[name];
     if (!sc) return false;
+    if (sc.radiosonde && A.importRadiosonde) {
+      A.importRadiosonde(sc.radiosonde, { assimilate: true });
+    } else if (A.resetRadiosonde) {
+      A.resetRadiosonde();
+    }
+    const scalarsPatch = Object.assign({ surfacePressure: 1013, precipRateMmH: 0 }, sc.scalars || {});
     const seedingPatch = Object.assign({ on: false, agent: 'agi', inpConc: 80, glaciationEff: 0.85, alt: 1.1 }, sc.seeding || {});
-    const microPatch = Object.assign({ autoPhaseTemp: false }, sc.micro || {});
-    const patch = { scalars: sc.scalars, layers: sc.layers, micro: microPatch, seeding: seedingPatch, phases: sc.phases, aerosol: sc.aerosol };
+    const microPatch = Object.assign({ reMode: 'derived', autoPhaseTemp: false }, sc.micro || {});
+    const patch = { scalars: scalarsPatch, layers: sc.layers, micro: microPatch, seeding: seedingPatch, phases: sc.phases, aerosol: sc.aerosol };
     P.applyStatePatch(patch);
     A.STATE.micro.iceFrac = sc.phases.ice || 0;
     if (global.Kessler && global.Kessler.reset) global.Kessler.reset();

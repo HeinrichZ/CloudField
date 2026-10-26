@@ -26,7 +26,9 @@ CloudField 将三维实时体积云渲染与云微物理参数化、遥感观测
   - **VIS / RVR / CMV、跑道三段式 RVR（TDZ / MID / END）与 ILS $3^\circ$ 下滑道斜程能见度（SVR）**：遵循 ICAO Doc 9365 与 EASA AMC NCO.OP.110，结合有效能见度/RVR 与最低 BKN/OVC 云底高（Ceiling）判定 `CAVOK / VMC / CAT-I / CAT-II / CAT-IIIA~C` 等级；沿 3.6 km 跑道轴线实时采样**接地区（TDZ）、中间段（MID）、停止端（END）三段式 RVR**；计算飞行员沿 **ILS $3^\circ$ 下滑道进近的斜程能见度（SVR）与决断高（DH 200 ft / 100 ft）目视参考建立判据**；支持跑道磁航向**顶风/顺风/正侧风分量分解与超限告警**。
   - **高原/高高原机场 QNH↔QFE、密度高度（DA）与严寒机场高度表修正**：内置中国民航机场表（WGS-84 坐标与海拔），自动识别一般高原（$\ge 1524\text{ m}$）与高高原机场（$\ge 2438\text{ m}$），实时换算修正海平面气压 QNH、场面气压 QFE、**计入高湿虚温修正的密度高度（Density Altitude，DA）与起飞滑跑距离增量**，并按 **ICAO Doc 8168 (PANS-OPS)** 计算严寒天气下决断高（DH/MDH）的低温气压高度表正修正量。
   - **飞机积冰（SLD）、颠簸耗散率（EDR）与低空风切变（LLWS）风险评估**：根据过冷水含量（SLWC）、温度效率窗（$0 \sim -38^\circ\text{C}$）与有效滴径 $r_e$ 计算飞机积冰严重度与 SLD 告警；根据对流强度、积雨云含水量与边界层切变输出国际民航标准**湍流涡旋耗散率 $\text{EDR}$（$\text{m}^{2/3}\text{s}^{-1}$）**与进近走廊 **$0\text{–}500\text{ m}$ 低空垂直风切变（$\text{kt/100ft}$）及微下击暴流告警**。
-- **模式前处理与科研数据导出**：支持一键导出标准 METAR、IWXXM XML、BUFR/GRIB JSON、ICON-LES Fortran Namelist（`.nml`）、CLOUDLAB 实验配置（`.yaml`）、57 层完整垂直廓线 CSV（`toProfileCSV`）及三方案微物理响应曲线 CSV（`toSchemeCSV`），并提供命令行批处理与 Python SDK。
+  - **低空经济（UAV / eVTOL / 播云无人机）适航与光电吊舱（EO/IR）透过率评估**：针对 $0\text{–}1000\text{ m AGL}$ 低空空域（`uavLowAltitudeAssessment`），综合评估无除冰碳纤维旋翼积冰指数、锂电池低温可用容量折减率（$\%$）、抗风与湍流边界、$1\text{ km}$ 斜距可见光（$550\text{ nm}$）与短波红外（$1550\text{ nm}$）光电吊舱大气透过率，输出 `GO / CAUTION / NO-GO` 适航放行状态与受限因子。
+  - **高空巡航（FL260–FL400）飞机凝结尾迹（Contrail）与静力稳定度评估**：按 **ICAO / WMO Schmidt–Appleman 判据**（`cruiseContrailAssessment`）计算巡航高度层混合斜率 $G$（$\text{Pa/K}$）、凝结尾迹临界生成温度 $T_{\text{LM}}$、对冰相对湿度 $\text{RHi}$ 与冰过饱和区（ISSR）持续性卷云尾迹生成判据，同时输出巡航层位温 $\theta$ 与 Brunt–Väisälä 静力稳定度频率 $N_{\text{BV}}$。
+- **典型教学与运行场景预设及模式数据导出**：内置 8 类典型预设场景（辐射雾 `fog`、层积云 `stratus`、晴空积云 `cumulus`、高空卷云 `cirrus`、过冷云催化 `cloudlab`、强对流积雨云 `cbstorm`、**冻雨暖鼻与严重积冰 `fzra`**、**高原高温高密 `plateau`**）；支持一键导出标准 METAR、IWXXM XML、BUFR/GRIB JSON、ICON-LES Fortran Namelist（`.nml`）、CLOUDLAB 实验配置（`.yaml`）、57 层完整垂直廓线 CSV（`toProfileCSV`）、三方案微物理响应曲线 CSV（`toSchemeCSV`）及自包含 HTML 诊断报告，并提供命令行批处理与 Python SDK。
 
 ---
 
@@ -119,6 +121,7 @@ CloudField/
 | 低温高度修正 | $\Delta H = H \cdot \frac{15 - T_0}{273.15 + T_0 - 0.5 L_0 (H + H_{\text{elev}})}$ | ICAO Doc 8168 (PANS-OPS) 严寒机场决断高正修正 |
 | 下滑道斜程能见度 | $\text{SVR}(H) = \frac{3.912}{\frac{1}{L_{\text{slant}}} \int_0^{L_{\text{slant}}} \beta(s)\,\mathrm{d}s}$ | ILS $3^\circ$ 下滑道机头至接地区斜向路径积分能见度 |
 | 对流有效位能 | $\text{CAPE} = \int_{z_{\text{LFC}}}^{z_{\text{EL}}} g \frac{T_p(z) - T_{\text{env}}(z)}{T_{\text{env},K}(z)}\,\mathrm{d}z$ | 气块干/湿绝热抬升正浮力垂直积分（$\text{J/kg}$） |
+| 凝结尾迹临界温度 | $G = \frac{\text{EI}_{\text{H}_2\text{O}} c_p p}{\varepsilon Q (1-\eta)}$，$T_{\text{LM}} = -46.46 + 9.43\ln(G-0.053) + 0.72[\ln(G-0.053)]^2$ | Schmidt–Appleman 高空巡航尾迹生成与持续判据 |
 
 详细推导与参数化说明见 [`docs/methodology.md`](docs/methodology.md)。
 

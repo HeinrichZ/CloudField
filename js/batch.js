@@ -10,17 +10,28 @@
 
   function runOne(statePatch, time) {
     if (statePatch) P.applyStatePatch(statePatch);
-    const w = P.worstVisibilityDetailed(time || 0);
+    const t = time || 0;
+    const w = P.worstVisibilityDetailed(t);
     const cover = A.totalCloudCover();
-    const ops = O.compute(time || 0);
+    const ops = O.compute(t, { all: true });
     return {
       vis: isFinite(w.vis) ? Math.round(w.vis) : null,
       visAlt: +w.alt.toFixed(2),
       cover: +cover.toFixed(1),
       opticalDepth: +ops.opticalDepth.toFixed(3),
+      lwp: ops.lwp != null ? +ops.lwp.toFixed(1) : null,
+      iwp: ops.iwp != null ? +ops.iwp.toFixed(1) : null,
+      creSW: ops.creSW != null ? +ops.creSW.toFixed(1) : null,
       albedo: ops.albedo != null ? +ops.albedo.toFixed(3) : null,
       dBZ: ops.radar ? +ops.radar.dBZ.toFixed(1) : null,
       satelliteTb: ops.satelliteTb != null ? +ops.satelliteTb.toFixed(1) : null,
+      capeJkg: ops.thermo ? ops.thermo.capeJkg : null,
+      icingIndex: ops.icing ? ops.icing.maxIndex : null,
+      svrAtCat1DhM: ops.approachSlant ? ops.approachSlant.svrAtCat1DhM : null,
+      edrMax: ops.turbulence ? ops.turbulence.edrMax : null,
+      llwsKtPer100Ft: ops.turbulence ? ops.turbulence.llwsKtPer100Ft : null,
+      uavStatus: ops.uav ? ops.uav.status : null,
+      contrailPersistent: ops.contrail ? ops.contrail.contrailPersistent : null,
     };
   }
 

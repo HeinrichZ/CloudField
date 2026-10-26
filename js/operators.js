@@ -250,6 +250,16 @@
     if (global.Physics && global.Physics.turbulenceAndShearDiagnostics) {
       out.turbulence = global.Physics.turbulenceAndShearDiagnostics(time);
     }
+    if (global.Physics && global.Physics.uavLowAltitudeAssessment) {
+      out.uav = global.Physics.uavLowAltitudeAssessment({ time });
+    }
+    if (global.Physics && global.Physics.cruiseContrailAssessment) {
+      out.contrail = global.Physics.cruiseContrailAssessment(10.5, time);
+    }
+    if (all && global.Physics) {
+      if (global.Physics.icingDiagnostics) out.icing = global.Physics.icingDiagnostics(time);
+      if (global.Physics.approachSlantProfile) out.approachSlant = global.Physics.approachSlantProfile({ time });
+    }
     if (A.parcelThermodynamics) {
       out.thermo = A.parcelThermodynamics();
     }

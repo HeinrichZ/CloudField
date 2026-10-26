@@ -36,9 +36,17 @@ img{max-width:100%;border:1px solid #ccc;border-radius:6px}</style></head><body>
 <div>最坏能见度：${isFinite(w.vis) ? (w.vis >= 1000 ? (w.vis / 1000).toFixed(2) + ' km' : w.vis.toFixed(0) + ' m') : '∞'} @ ${w.alt.toFixed(1)} km</div>
 <div>总云量：${cover.toFixed(0)} %</div>
 <div>光学厚度：${ops.opticalDepth.toFixed(3)}</div>
+${ops.lwp != null ? `<div>LWP / IWP：${ops.lwp.toFixed(1)} / ${(ops.iwp || 0).toFixed(1)} g/m²</div>` : ''}
+${ops.creSW != null ? `<div>短波云辐射强迫 CRE_SW：${ops.creSW.toFixed(1)} W/m²</div>` : ''}
 ${ops.albedo != null ? `<div>云反照率：${ops.albedo.toFixed(3)}</div>` : ''}
 ${ops.satelliteTb != null ? `<div>卫星红外亮温：${ops.satelliteTb.toFixed(1)} K</div>` : ''}
-${ops.radar ? `<div>雷达反射率：${ops.radar.dBZ.toFixed(1)} dBZ</div>` : ''}
+${ops.radar ? `<div>雷达反射率：${ops.radar.dBZ.toFixed(1)} dBZ（机载 X 波段：${ops.radar.dBZXBand} dBZ · ${ops.radar.wxrColor}）</div>` : ''}
+${ops.thermo ? `<div>热力不稳定度 CAPE / CIN：${ops.thermo.capeJkg} / ${ops.thermo.cinJkg} J/kg（LCL ${ops.thermo.lclKm} km, LI ${ops.thermo.liftedIndex}）</div>` : ''}
+${ops.icing ? `<div>飞机积冰危险指数：${ops.icing.maxIndex}/100 (${ops.icing.severity}) @ ${ops.icing.worstAltKm} km${ops.icing.sldRisk ? ' [SLD告警]' : ''}</div>` : ''}
+${ops.approachSlant ? `<div>ILS 3°下滑道斜程能见度 (CAT-I DH 60m)：SVR ${ops.approachSlant.svrAtCat1DhM} m / 斜程 RVR ${ops.approachSlant.slantRvrAtCat1DhM} m</div>` : ''}
+${ops.turbulence ? `<div>湍流 EDR / 低空风切变：${ops.turbulence.edrMax} m²/³s⁻¹ (${ops.turbulence.edrSeverity}) / ${ops.turbulence.llwsKtPer100Ft} kt/100ft</div>` : ''}
+${ops.uav ? `<div>低空 UAV/eVTOL 适航评估：${ops.uav.status}（旋翼积冰 ${ops.uav.rotorIcingIndex} · 电池低温折减 ${ops.uav.batteryDeratingPct}% · 1km EO/IR透过率 ${ops.uav.eoirVisTrans1kmPct}%）</div>` : ''}
+${ops.contrail ? `<div>高空巡航凝结尾迹 (FL${ops.contrail.flightLevel})：${ops.contrail.contrailPersistent ? '持续尾迹 (ISSR)' : (ops.contrail.contrailForms ? '短时尾迹' : '不形成')}（RHi ${ops.contrail.rhiPct}% · T_LM ${ops.contrail.tThresholdC}°C）</div>` : ''}
 ${cmp && cmp.atCurrentN ? `<div>三方案雨强 (Kessler/KK2000/SB06)：${cmp.atCurrentN.kessler.toFixed(2)} / ${cmp.atCurrentN.kk2000.toFixed(2)} / ${cmp.atCurrentN.sb06.toFixed(2)} mm/h</div>` : ''}
 ${sdDiag ? `<div>CLOUDLAB 播云沟槽能见度：${Math.round(sdDiag.visAmbientM)} m → ${Math.round(sdDiag.visSeededM)} m (×${sdDiag.gainRatio.toFixed(2)})</div>` : ''}
 </div>

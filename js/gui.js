@@ -543,6 +543,8 @@
         }
         if (o.turbulence) rows.push(card('湍流 EDR / 低空风切变', o.turbulence.edrMax.toFixed(2) + ' (' + o.turbulence.edrSeverity + ') · ' + o.turbulence.llwsKtPer100Ft + ' kt/100ft'));
         if (o.thermo) rows.push(card('CAPE / CIN', o.thermo.capeJkg + ' / ' + o.thermo.cinJkg + ' J/kg'));
+        if (o.uav) rows.push(card('低空 UAV/eVTOL 适航', o.uav.status + ' · 旋翼积冰 ' + o.uav.rotorIcingIndex + ' · 电池折减 ' + o.uav.batteryDeratingPct + '% · EO/IR透过 ' + o.uav.eoirVisTrans1kmPct + '%'));
+        if (o.contrail) rows.push(card('巡航凝结尾迹 (FL' + o.contrail.flightLevel + ')', (o.contrail.contrailPersistent ? '持续尾迹 (ISSR)' : (o.contrail.contrailForms ? '短时尾迹' : '不形成')) + ' · RHi ' + o.contrail.rhiPct + '% · θ=' + o.contrail.thetaK + 'K'));
         if (o.extSplit) rows.push(card(I18N.t('op.extSplit'), (o.extSplit.ratio * 100).toFixed(0) + '%'));
         const oe = document.getElementById('sp-ops'); if (oe) oe.innerHTML = rows.join('');
       }
@@ -784,6 +786,8 @@
       ['cirrus', I18N.t('help.cirrus')],
       ['cloudlab', 'CLOUDLAB Seeding'],
       ['cbstorm', 'Cb Storm'],
+      ['fzra', '冻雨暖鼻积冰 (FZRA/SLD)'],
+      ['plateau', '高原高温高密 (Hot-High)'],
     ].forEach(([k, lbl]) => {
       row.appendChild(btn(lbl, () => { if (global.Help) global.Help.applyScenario(k); refreshAll(); }));
     });

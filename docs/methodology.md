@@ -155,6 +155,8 @@ r_e 的单一来源由 `micro.reMode` 决定：`derived`（默认）用 `effRadi
   - 机载 X 波段（9.3 GHz，ARINC 708 四色规范）计入双程雨衰 $k_{\text{X}} = 0.014 R^{1.15}\ \text{dB/km}$ 与 PAC 强回波后方雨衰阴影告警；
   - 在 $0 \sim -38^\circ\text{C}$ 过冷温区耦合过冷水含量（SLWC）、温度收集效率与过冷大水滴（$r_e > 12\ \mu\text{m}$）碰撞放大因子，评估积冰严重度（`NONE / LIGHT / MODERATE / SEVERE`）及人工播云冰化后的积冰消减幅度；
   - 输出国际民航标准湍流涡旋耗散率 $\text{EDR}$（$\text{m}^{2/3}\text{s}^{-1}$）与 $0\text{–}500\text{ m}$ 低空垂直风切变（$\text{kt/100ft}$）。
+- **低空经济（UAV / eVTOL / 播云无人机）适航与光电吊舱（EO/IR）透过率评估**：针对 $0\text{–}1000\text{ m AGL}$ 低空作业走廊，计算无除冰碳纤维旋翼积冰风险（敏感度为运输机机翼的 $2.2$ 倍）、锂电池低温可用容量折减率（$<15^\circ\text{C}$ 线性衰减，$-10^\circ\text{C}$ 约折减 $40\%$）、$1\text{ km}$ 斜距可见光（$550\text{ nm}$）与短波红外（$1550\text{ nm}$）Beer–Lambert 透过率，综合给出 `GO / CAUTION / NO-GO` 适航判据。
+- **高空巡航（FL260–FL400）Schmidt–Appleman 飞机凝结尾迹（Contrail）与静力稳定度判据**：按航空煤油（Jet-A1，$\text{EI}_{\text{H}_2\text{O}}=1.25\ \text{kg/kg}$，$Q=43.2\ \text{MJ/kg}$，推进效率 $\eta=0.35$）计算排气混合斜率 $G = \frac{\text{EI}_{\text{H}_2\text{O}} c_p p}{\varepsilon Q (1-\eta)}$（$\text{Pa/K}$）与 Schumann (1996) 临界温度 $T_{\text{LM}}$；当环境温度 $T_{\text{amb}} \le T_{\text{LM}}$ 且环境对冰相对湿度 $\text{RHi} \ge 100\%$ 时判定形成持续性人造卷云尾迹（Persistent Contrail Cirrus），同时输出巡航层位温 $\theta$ 与 Brunt–Väisälä 频率 $N_{\text{BV}} = \sqrt{\frac{g}{\theta}\frac{\partial \theta}{\partial z}}$。
 
 ## 八、坐标系、机场表、高原 QFE/QNH、密度高度（DA）与低温高度表修正
 
