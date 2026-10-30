@@ -5,6 +5,8 @@
  *   2) kk2000  : Khairoutdinov & Kogan (2000) 双矩方案 P_ac = 1350·q_c^2.47·N_c^-1.79（体现 Albrecht 气溶胶抑制降水效应）
  *   3) sb06    : Seifert & Beheng (2006) 双矩方案（ICON-LES 原生微物理；含谱宽 ν 与内部时间尺度 τ 普适函数 Φ(τ)）
  * 并集成 ETH CLOUDLAB 过冷水层云人工播云 WBF（Wegener–Bergeron–Findeisen）水汽竞争冰化沉降项 P_wbf。
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

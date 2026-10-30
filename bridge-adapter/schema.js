@@ -1,6 +1,7 @@
 /* schema.js — CloudField 参数 Schema（Bridge /api/schema 返回）
  * 映射到 js/atmosphere.js 的 STATE 字段，供外部系统按路径读写。
  * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 'use strict';
 

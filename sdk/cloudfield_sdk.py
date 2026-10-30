@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """cloudfield_sdk.py — CloudField Python SDK
 
+作者：Heinrich.Z & Tianyuan.J.Z
+Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
+
 轻量封装：把批量诊断请求交给 Node CLI 执行，返回结构化结果。
 依赖：本机已安装 Node，且 CloudField 仓库根目录在 CLOUDFIELD_ROOT 下。
 

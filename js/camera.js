@@ -1,5 +1,6 @@
 /* camera.js — 轨道相机（鼠标/触摸拖拽旋转、滚轮缩放、视角预设）
- * 作者：Heinrich.Z & Tianyuan.J.Z */
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md. */
 (function (global) {
   'use strict';
 

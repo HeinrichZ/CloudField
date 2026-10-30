@@ -3,7 +3,7 @@
  * 右侧：读数 / 公式 / 色标 三个 Tab——公式一律附带当前数值的代入示例，
  *       色标 Tab 给出每个量自己的 cmap 与归一化区间（标量用指针标出当前位置）。
  * 作者：Heinrich.Z & Tianyuan.J.Z
- * Copyright Tianyuan.J.Z©
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

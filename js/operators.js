@@ -2,6 +2,8 @@
  * 同一微物理场的不同"观测算子"：散射/吸收分离、太阳/天空辐照度、
  * 云反照率、卫星可见光亮温、激光雷达回波、微波/气象雷达反射率（含粒子谱宽六阶矩修正）。
  * 均为自包含近似模型；真实传感器需接入光谱响应/散射查找表（标注于注释）。
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

@@ -1,6 +1,8 @@
 /* recorder.js — 场景复现
  * 记录完整参数快照 + 每一步操作，支持精确回放（参数级 + 操作级）。
  * 修复此前"事件数为 0"的问题：在每次参数变化时主动调用 record()。
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

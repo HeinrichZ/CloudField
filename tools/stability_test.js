@@ -1,4 +1,6 @@
 /* stability_test.js — CloudField 稳定性 + 功能测试（Node + jsdom + 桩 GL）
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  *
  * 稳定性：在 jsdom 下驱动数百帧真实渲染循环，期间随机扰动参数（温度/风/质量/图层开关/
  *         视图/播放态），周期性切换语言与单位、刷新 occupancy，验证：

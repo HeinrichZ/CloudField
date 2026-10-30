@@ -1,7 +1,7 @@
 # CloudField 方法学与物理规程说明
 
 > 本文件对应软件内“说明”弹窗内容，作为可外发的开发文档。
-> Copyright Tianyuan.J.Z© · 作者：Heinrich.Z & Tianyuan.J.Z
+> Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich) · 作者：Heinrich.Z & Tianyuan.J.Z · All Rights Reserved（详见 [`../LICENSE-TERMS.md`](../LICENSE-TERMS.md)）
 
 ## 一、能见度与消光计算
 
@@ -200,10 +200,21 @@ r_e 的单一来源由 `micro.reMode` 决定：`derived`（默认）用 `effRadi
 
 上述项如需进入业务或论文级使用，应作为独立里程碑实现，而不是在现有近似上继续叠加。
 
-## 十、鸣谢
+## 十、授权与使用条款
+
+- 本软件为**专有软件（proprietary）**，全部权利由作者保留。本仓库在 **GitHub 上仅用于版本管理与备份**，源码仅公开供查阅（viewing and inspection only），不构成对任何第三方的使用许可或公开授权。
+- **使用授权**：如需使用本软件，请联系作者获取书面授权（邮箱：**zhangheinrich@foxmail.com**）。
+- **免费授权（学术与科研用途）**：在**德国、中国（含港澳台）、法国**的学术与科研用途，当项目/课题的**纵向经费低于 30,000 美元（USD 30,000）**时，经作者**书面授权后可免费使用**；使用时必须**引用本项目**，并作出**书面鸣谢**。
+- **其他用途**（商业与业务运营、经费达到或超过上述额度、或其他国家/地区）须与作者另行协商并获得书面授权。完整英文法律条款见仓库根目录 [`LICENSE-TERMS.md`](../LICENSE-TERMS.md)。
+
+## 十一、鸣谢
 
 感谢 **MonikaSong G.C（南京）** 提供专业知识支持。
 
 感谢 **Alvin Lv** 提供稳定性测试协助。
 
 感谢 **Huaneng Yuan** 提供测试协助。
+
+---
+
+*© 2026 Tianyuan.J.Z (Zhang Heinrich) · 作者 Heinrich.Z & Tianyuan.J.Z · All Rights Reserved*

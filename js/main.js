@@ -1,7 +1,7 @@
 /* main.js — CloudField 初始化与渲染主循环 / 弹窗 / Bridge 接线
  * 默认语言：德文（de）。所有文案经 I18N.t() 取三语。
  * 作者：Heinrich.Z & Tianyuan.J.Z
- * Copyright Tianyuan.J.Z©
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

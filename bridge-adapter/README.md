@@ -3,7 +3,7 @@
 > 独立的 IPC 进程，承载 CloudField 与外部系统（仿真引擎 / 气象数据源 / 多节点）之间的全部通信。
 > **纯 Node 内置模块实现（http + crypto），无需 `npm install`。**
 >
-> Copyright Tianyuan.J.Z© · 作者：Heinrich.Z & Tianyuan.J.Z
+> Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich) · 作者：Heinrich.Z & Tianyuan.J.Z · All Rights Reserved（详见 [`../LICENSE-TERMS.md`](../LICENSE-TERMS.md)）
 
 ---
 

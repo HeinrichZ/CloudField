@@ -1,6 +1,7 @@
 # CloudField 功能需求与演进路线图
 
 > 本文档汇总对 CloudField 体积云微物理诊断工具的能力盘点与增强建议，按"诊断能力 / 微物理模块 / 数据接入 / 工程与协作 / 用户体验"五个维度组织，共 14 项。每项给出**现状缺口**与**具体建议**，作为后续版本演进的需求基线。
+> Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich) · 作者：Heinrich.Z & Tianyuan.J.Z · All Rights Reserved（详见 [`../LICENSE-TERMS.md`](../LICENSE-TERMS.md)）
 
 ## 一、诊断能力：从"点"到"线"和"面"
 

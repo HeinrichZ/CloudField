@@ -3,6 +3,8 @@
  *       透射率 T0 = 1 − R0；吸收按 exp(−(1−ω)·τ/μ) 修正（ω 为单次散射反照率）。
  *       在 (τ, μ) 网格上预计算 T/R 表，双线性插值。
  * 校验极限：τ=0 → T=1, R=0；τ→∞、ω=1 → T=0, R→1；ω<1 时 R 随吸收下降。
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

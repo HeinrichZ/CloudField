@@ -1,4 +1,6 @@
 /* physics.js — CloudField 扩展物理：谱矩、相态分档、气溶胶、详细消光与 ETH CLOUDLAB 播云诊断
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  * 作为 atmosphere.js 的增强层（保持向后兼容）。
  * 提供：详细消光（散射/吸收分离、谱宽耦合、Korolev 温度相态分配）、水平能见度场、
  *       ETH CLOUDLAB 播云消散沟对比诊断、参数敏感性扫描、状态补丁。

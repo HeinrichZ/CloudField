@@ -7,7 +7,7 @@
  *   I18N.onLangChange(fn)       // 订阅语言切换（各 UI 模块据此重建）
  *   I18N.apply(root)            // 将 data-i18n / data-i18n-attr 应用到 DOM
  * 作者：Heinrich.Z & Tianyuan.J.Z
- * Copyright Tianyuan.J.Z©
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

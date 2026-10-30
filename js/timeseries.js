@@ -5,6 +5,8 @@
  *   t_hours,surfaceTemp,surfaceRH,windSpeed,windDir,convection,
  *   ci.cov,ci.den,cs.cov,cs.den,sc.cov,sc.den,cu.cov,cu.den,cb.cov,cb.den
  *   井号 # 行为注释，空行忽略。首行可选表头（含这些列名）。
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

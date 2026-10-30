@@ -1,5 +1,7 @@
 /* help.js — 帮助与教学
  * 参数释义卡片（每个状态量的物理含义与"滑块改动后的影响"）+ 示例场景预设。
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

@@ -2,6 +2,8 @@
  * 对导入的探空 / METAR 做合理性检查、缺测处理、异常值标记，
  * 以及时间戳对齐与坐标系统一（UTC 归一、WGS-84 提示）。
  * 输出结构化 QC 报告供 UI 展示。
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

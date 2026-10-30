@@ -1,4 +1,6 @@
 /* dom_smoke.js — 用 jsdom 加载真实 index.html 跑一遍启动冒烟
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  * boot_test.js 用的是伪 DOM，查不出元素接线（id 写错、选择器落空）这类问题；
  * 这里加载真实 HTML + 真实脚本顺序，只把 canvas 的 GL/2D 上下文换成桩。
  * 用法：NODE_PATH=<workspace node_modules> node tools/dom_smoke.js

@@ -1,4 +1,6 @@
 /* occ_check.js — 定量核对 occupancy 体素与运行时密度场是否一致
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  * 判据：worker 把某体素判为“空”(occ < OCC_EPS) 后，着色器会以 2.5 km 粗步跳过它。
  *       若该体素内真实密度（含风的时间偏置、当前生命期）仍显著 > 0，则跳过会抽掉云体，
  *       在画面上留下体素对齐的半透明矩形窗 + 2.5 km 采样网格。

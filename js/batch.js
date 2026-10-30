@@ -1,6 +1,8 @@
 /* batch.js — 批处理与自动化核心
  * 无人值守批量诊断：机场列表 × 时次矩阵。
  * 纯计算（不依赖 DOM），可在浏览器与 Node（经 CLI 加载全局）中复用。
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

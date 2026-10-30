@@ -4,6 +4,8 @@
  *       预先在对数网格上建表并线性插值；适用于云滴尺度（x≫1）的工程近似。
  * 多分散谱耦合：当给定 Gamma 谱有效方差 ν_eff ∈ [0, 0.5] 时，采用五点高斯求积对
  *       Q_ext(x) 做谱宽平滑与有效截面修正，使谱型参数（ν_eff / σ_g）直接驱动消光系数。
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

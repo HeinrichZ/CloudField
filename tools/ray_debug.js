@@ -1,4 +1,6 @@
 /* ray_debug.js — CPU 移植 FRAG 主着色器，复现/定位视口中的网格状伪影
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  * 用法：node tools/ray_debug.js
  * 输出：tools/ray_occ.png（开启 occ 跳步）/ tools/ray_noocc.png（关闭）
  *       tools/occ_top.png / tools/occ_side.png（occ 体素场俯视/侧视，查空区形状）

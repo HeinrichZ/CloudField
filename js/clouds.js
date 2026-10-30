@@ -2,7 +2,7 @@
  * 性能地基：early ray termination / ray jitter + TAA / 空区间跳过(occupancy 3D纹理)
  *          / 自适应 pixelRatio / 密度粗网格由 Web Worker 计算
  * 作者：Heinrich.Z & Tianyuan.J.Z
- * Copyright Tianyuan.J.Z©
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  *
  * 关于空区间跳过的两个坑（踩过，别再踩）：
  *   1. occ 是 2.5 km 粗网格上的“体素内密度最大值”，子采样只有 2×2×2，

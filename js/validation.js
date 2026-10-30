@@ -1,6 +1,8 @@
 /* validation.js — 验证与误差评估
  * 模型 vs 观测：偏差、均方根误差、相关系数、散点、时间序列对比、泰勒图统计量。
  * 纯统计计算；绘图由 UI 层（canvas）完成。
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

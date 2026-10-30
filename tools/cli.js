@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 /* cli.js — CloudField 命令行批量诊断
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
+ *
  * 在 Node 中以伪 window 加载浏览器模块（atmosphere/physics/.../batch），
  * 支持机场列表 × 时次矩阵无人值守批量诊断，输出 CSV 或 JSON。
  *

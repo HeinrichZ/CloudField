@@ -1,5 +1,6 @@
 /* airports_cn.js — 中国民航机场表（Bridge Adapter 用，WGS-84）
  * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  *
  * 说明：本表为人工校核的“代表性子集”（约 90 个，字段 [icao,iata,name,lat,lon,elev_m]）。
  * 完整 ~250 民用机场表请从 AIP / 民航局公开资料补齐，或在本文件后追加。

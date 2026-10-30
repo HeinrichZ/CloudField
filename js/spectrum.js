@@ -5,6 +5,8 @@
  *   r_e = r_g · exp(2.5·ln²σ_g)，  ν_eff = exp(ln²σ_g) − 1
  *   LWC = ρ_w · (4π/3) · N · r_e³ · (1 + 3·ν_eff)
  * 实测谱：对 bin 求和 LWC = ρ_w·(4π/3)·Σ r³·(dN/dlnr)·Δlnr。
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

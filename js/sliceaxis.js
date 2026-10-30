@@ -2,6 +2,8 @@
  * 把原来右侧那个孤零零的“202 m”读数改成一根能拖的高度轴：
  * 拖动手柄 = 水平切片高度，3D 云场里同步画一条高亮水平线穿过云体（见 clouds.js 的 uSliceAlt）。
  * 轴上另有一个只读标记 = 当前最低能见度所在高度，两者空间关系一眼可见。
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

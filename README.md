@@ -1,4 +1,5 @@
 # CloudField · 云微物理参数化交互式诊断与民航气象仿真工具
+**Interactive Cloud Microphysics & Aviation Weather Simulation Sandbox (WebGL2 · DE / EN / ZH)**
 
 > ⚠️ **All Rights Reserved.** Source visible for inspection only.
 > No license granted. Any use requires prior written permission.
@@ -6,9 +7,15 @@
 >
 > ⚠️ **保留所有权利。** 源码仅公开供查阅，不授予任何使用许可；任何使用均需事先获得书面授权。详见 [LICENSE-TERMS.md](./LICENSE-TERMS.md)。
 
+> **核心定位**：首个面向**民航低能见度气象研判**的浏览器端**云微物理交互仿真**工具（德 / 英 / 中三语本地化 · 纯前端 WebGL2 零依赖离线沙盒）。
+>
 > 一个**纯前端、离线运行**的云微物理参数化诊断、复杂气象特情分析与大涡模拟（ICON-LES / WRF）前处理沙盒：以可调参数对应经典单矩/双矩微物理方案（Kessler 1969、Khairoutdinov & Kogan 2000、Seifert & Beheng 2006 / ICON 2-moment、Koschmieder 能见度定律、多分散米氏散射），内置 **ETH CLOUDLAB 过冷层云催化播云（WBF 冰化消云沟槽）** 三维/二维联动诊断、**民航复杂运行气象支持（METAR/SPECI/TAF、VIS/RVR/CMV、跑道风分解、高原 QNH/QFE、低温高度修正、飞机积冰指数）** 以及模式配置与科研数据导出。
 >
-> **Copyright Tianyuan.J.Z© · 作者：Heinrich.Z & Tianyuan.J.Z**
+> **Overview (EN)**: **CloudField** is the first browser-based **interactive cloud microphysics** and **aviation weather simulation** sandbox designed for low-visibility meteorological decision support, atmospheric physics education, and **Large-Eddy Simulation** (**ICON-LES** / **WRF**) pre-processing. Running 100% offline in WebGL2 with zero external dependencies and full **DE / EN / ZH** trilingual localization, it bridges 1-moment / 2-moment bulk microphysics schemes (Kessler 1969, KK2000, Seifert & Beheng 2006), **glaciogenic cloud seeding** simulation (ETH CLOUDLAB Wegener–Bergeron–Findeisen trenching), **METAR / SPECI / TAF** inversion, runway **VIS / RVR / CMV** & ILS $3^\circ$ slant visual range (SVR), aircraft icing (SLD / ICAO Doc 9640 HOT), and ABL micrometeorology inflow export for MATLAB/Simulink, OpenFOAM, ANSYS Fluent/FENSAP-ICE, and ParaView VTK.
+>
+> **Überblick (DE)**: Interaktives Browser-Diagnose- und Simulationswerkzeug für **Wolkenmikrophysik**, **Wolkenimpfung** (ETH CLOUDLAB / WBF-Prozess) und **Flugmeteorologie** (METAR/TAF, RVR/SVR, Vereisung, ICON-LES-Vorverarbeitung) — reines WebGL2-Frontend, vollständig offline, dreisprachig (Deutsch / Englisch / Chinesisch).
+>
+> **Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich) · 作者：Heinrich.Z & Tianyuan.J.Z · All Rights Reserved**
 
 ---
 

@@ -4,6 +4,8 @@
  *   SI（严格国际单位）：       K、Pa、m、m/s、m
  * 物理计算内部一律用 °C / hPa / km / m，只在显示层换算，避免状态里出现两套数。
  * 注：1 hPa = 1 mbar，数值恒等，切换只改标签口径。
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

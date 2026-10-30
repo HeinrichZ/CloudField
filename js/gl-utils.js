@@ -1,5 +1,6 @@
 /* gl-utils.js — 最小 WebGL 工具集（无外部依赖）
- * 作者：Heinrich.Z & Tianyuan.J.Z */
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md. */
 (function (global) {
   'use strict';
 

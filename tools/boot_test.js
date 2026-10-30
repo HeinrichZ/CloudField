@@ -1,4 +1,6 @@
 /* boot_test.js — CloudField 全链路启动回归（Node + DOM/WebGL2 桩）
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  * 用途：在无浏览器环境完整执行 boot()，验证：
  *   1) boot() 全程无异常、渲染循环可跑（fake GL 下 COMPILE_STATUS 恒真，
  *      真实 GLSL 校验见 shader_static_check）

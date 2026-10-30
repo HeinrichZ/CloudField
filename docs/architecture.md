@@ -1,6 +1,6 @@
 # CloudField 系统架构
 
-> Copyright Tianyuan.J.Z© · 作者：Heinrich.Z & Tianyuan.J.Z
+> Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich) · 作者：Heinrich.Z & Tianyuan.J.Z · All Rights Reserved（详见 [`../LICENSE-TERMS.md`](../LICENSE-TERMS.md)）
 
 ## 总览
 

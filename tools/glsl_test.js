@@ -1,4 +1,6 @@
 /* glsl_test.js — 用真实 GLSL ES 3.00 解析器校验 clouds.js 的 4 个着色器
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  * 复现并锁死用户环境中的编译失败：'sampler3D' : No precision specified
  * 运行：node tools/glsl_test.js（需 @shaderfrog/glsl-parser，见 node workspace）
  *

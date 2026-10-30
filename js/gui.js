@@ -2,7 +2,7 @@
  * 分组：场景参数 / 云层 / 模拟与演进 / 可视化 / 微物理常量
  * 每条滑块右侧都有实时数值回显（拖动时可见精确值），风向用罗盘旋钮代替线性滑块。
  * 作者：Heinrich.Z & Tianyuan.J.Z
- * Copyright Tianyuan.J.Z©
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

@@ -1,5 +1,7 @@
 function res = cloudfield_sdk(action, varargin)
 % CLOUDFIELD_SDK  MATLAB / GNU Octave interface for CloudField Microphysics & CFD Sandbox
+%   Author: Heinrich.Z & Tianyuan.J.Z
+%   Copyright (c) 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
 %
 % Supported actions:
 %   1) cf = cloudfield_sdk('workspace', 'preset', 'cloudlab')

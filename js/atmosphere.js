@@ -2,7 +2,7 @@
  * 品牌：CloudField（原 CloudSim / CloudLab）
  * 设计重心：从“渲染管线”转向“云微物理参数化交互式诊断”
  * 作者：Heinrich.Z & Tianyuan.J.Z
- * Copyright Tianyuan.J.Z©
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

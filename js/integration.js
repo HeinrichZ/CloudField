@@ -11,7 +11,7 @@
  * 所有用户可见文案经 I18N.t() 取三语（中文/英文/德文，默认德文）。
  *
  * 作者：Heinrich.Z & Tianyuan.J.Z
- * Copyright Tianyuan.J.Z©
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

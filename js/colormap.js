@@ -2,6 +2,8 @@
  * 之前所有量共用一套 jet，读图时根本分不清量级。这里给每个量配自己的色标，
  * 并统一定义归一化区间；同一份定义导出成 256×1 LUT 纹理交给着色器，
  * 保证 3D 云体、水平切片、色标条三处颜色完全一致（改一处即可，不会各画各的）。
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';

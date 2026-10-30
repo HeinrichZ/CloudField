@@ -4,6 +4,8 @@
  *   2) ICON-LES / WRF Fortran Namelist (.nml) 微物理与播云前处理配置块
  *   3) ETH CLOUDLAB 敏感性试验 YAML 对照单
  *   4) 推送到 API 服务端（fetch 桩）
+ * 作者：Heinrich.Z & Tianyuan.J.Z
+ * Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
  */
 (function (global) {
   'use strict';
