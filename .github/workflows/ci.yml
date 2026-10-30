@@ -1,0 +1,62 @@
+# CloudField Automated Regression & Physics Verification Workflow
+# 作者：Heinrich.Z & Tianyuan.J.Z
+# Copyright © 2026 Tianyuan.J.Z (Zhang Heinrich). All Rights Reserved. See LICENSE-TERMS.md.
+
+name: Physics, GLSL & Stability CI
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Microphysics, GLSL & DOM Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run full-stack physics, aviation & i18n boot regression
+        run: node tools/boot_test.js
+
+      - name: Verify 3D Worker occupancy voxel vs shader fBm density consistency
+        run: node tools/occ_check.js
+
+      - name: Verify CLI multi-format scientific & operational exporters
+        run: |
+          for fmt in yaml nml metar iwxxm profile-csv scheme-csv matlab openfoam fluent; do
+            node tools/cli.js --preset cloudlab --format "$fmt" > "/tmp/cf_test.$fmt"
+            test -s "/tmp/cf_test.$fmt"
+          done
+
+      - name: Install isolated headless test harness (outside repo working tree)
+        run: |
+          mkdir -p /tmp/cf-ci-harness
+          cd /tmp/cf-ci-harness
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund jsdom @shaderfrog/glsl-parser
+
+      - name: Verify WebGL2 GLSL ES 3.00 shaders AST & negative control
+        env:
+          NODE_PATH: /tmp/cf-ci-harness/node_modules
+        run: node tools/glsl_test.js
+
+      - name: Run real HTML DOM boot & UI wiring smoke test
+        env:
+          NODE_PATH: /tmp/cf-ci-harness/node_modules
+        run: node tools/dom_smoke.js
+
+      - name: Run multi-frame render loop, Web Worker & GPU memory stability test
+        env:
+          NODE_PATH: /tmp/cf-ci-harness/node_modules
+        run: node tools/stability_test.js
